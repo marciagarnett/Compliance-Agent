@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Compliance Lookup Agent (MVP prototype)</title>
+  <style>
+    body { font-family: -apple-system, Segoe UI, Helvetica, Arial, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+    h1 { font-size: 1.4rem; margin-bottom: 0.2rem; }
+    .subtitle { color: #555; margin-top: 0; margin-bottom: 1.5rem; }
+    .banner { background: #fff8e1; border: 1px solid #e0c060; border-radius: 6px; padding: 0.75rem 1rem; margin-bottom: 1.5rem; font-size: 0.92rem; }
+    fieldset { border: 1px solid #ccc; border-radius: 6px; margin-bottom: 1.5rem; padding: 1rem; }
+    legend { font-weight: 600; padding: 0 0.4rem; }
+    label { display: block; margin-top: 0.6rem; font-size: 0.9rem; }
+    input[type=text], select, textarea { width: 100%; padding: 0.4rem; margin-top: 0.2rem; box-sizing: border-box; font-size: 0.95rem; }
+    button { margin-top: 0.8rem; padding: 0.5rem 1.2rem; font-size: 0.95rem; cursor: pointer; }
+    pre { background: #0d1117; color: #e6edf3; padding: 1rem; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; font-size: 0.85rem; line-height: 1.4; }
+    .query-echo { color: #555; font-size: 0.85rem; margin-bottom: 0.3rem; }
+    .disabled-note { color: #888; font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+  <h1>Compliance Lookup Agent</h1>
+  <p class="subtitle">MVP prototype - sample dataset, not HP's live compliance system.</p>
+
+  <div class="banner">
+    This is a class-project prototype on a small SAMPLE dataset. Every result carries
+    a "Human review required" note where data is missing, and every found result still
+    requires regulatory SME sign-off before anyone acts on it.
+  </div>
+
+  <fieldset>
+    <legend>Structured lookup</legend>
+    <form method="post" action="/lookup">
+      <label for="identifier">Product identifier (name, SKU, or RMN)</label>
+      <input type="text" id="identifier" name="identifier" required placeholder="e.g. Poly Voyager Focus 2">
+
+      <label for="region">Destination region</label>
+      <select id="region" name="region" required>
+        <option value="" disabled selected>Select a region</option>
+        {% for r in regions %}
+        <option value="{{ r }}">{{ r }}</option>
+        {% endfor %}
+      </select>
+
+      <button type="submit">Look up</button>
+    </form>
+  </fieldset>
+
+  <fieldset>
+    <legend>Ask a question in plain English</legend>
+    {% if not llm_available %}
+    <p class="disabled-note">Plain-English mode is disabled - no Anthropic API key is configured on this deployment. Use the structured lookup form above instead.</p>
+    {% endif %}
+    <form method="post" action="/ask">
+      <label for="question">Question</label>
+      <textarea id="question" name="question" rows="2" {% if not llm_available %}disabled{% endif %} placeholder="e.g. What do I need for a Poly Voyager Focus 2 shipping to Taiwan?"></textarea>
+      <button type="submit" {% if not llm_available %}disabled{% endif %}>Ask</button>
+    </form>
+  </fieldset>
+
+  {% if result %}
+  <fieldset>
+    <legend>Result</legend>
+    {% if query %}<p class="query-echo">Query: {{ query }}</p>{% endif %}
+    <pre>{{ result }}</pre>
+  </fieldset>
+  {% endif %}
+
+</body>
+</html>
