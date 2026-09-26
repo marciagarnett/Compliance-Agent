@@ -7,6 +7,14 @@ terminal app uses - lookup.py and llm_agent.py are imported unchanged, not
 reimplemented. Nothing about the grounding rules, the dataset, or the
 lookup logic changes by being served over HTTP instead of a terminal.
 
+The web app exposes a single mode: ask a question in plain English (POST
+/ask). The structured identifier+region form was removed after user
+testing showed people found the two side-by-side modes confusing, and
+consistently preferred the plain-English answers anyway - see
+deployment_checklist.md / test notes for the reasoning. agent.py (the CLI)
+still exposes structured lookup directly, since that testing was specific
+to the web UI.
+
 WHAT THIS DOES NOT DO: it never reads reference/ or ground_truth.zip (the
 real internal HP workbooks) - only data/product_master.csv and
 data/compliance_requirements.csv, the same sample CSVs the CLI app reads.
@@ -20,17 +28,17 @@ Run in production with a real WSGI server, e.g.:  gunicorn app:app
 
 Environment variables (all optional - see README.md / .env.example for the
 two the CLI app already uses):
-  ANTHROPIC_API_KEY   - enables the free-text ("ask") mode. Without it, the
-                        app still runs, just with structured lookup only,
-                        exactly like the CLI.
+  ANTHROPIC_API_KEY   - required for the app to answer anything. Without
+                        it, the page loads but the question box is
+                        disabled, since there is no other query path left.
   ANTHROPIC_MODEL     - optional model override (see llm_agent.py).
   WEB_APP_USERNAME /
   WEB_APP_PASSWORD   - if BOTH are set, the whole app is gated behind HTTP
                         Basic Auth. Strongly recommended for any hosted demo
-                        URL that isn't meant to be fully public, since the
-                        "ask" mode spends your Anthropic API key on every
-                        request. Leave both unset to run without a gate
-                        (fine for purely local testing only).
+                        URL that isn't meant to be fully public, since
+                        every question spends your Anthropic API key.
+                        Leave both unset to run without a gate (fine for
+                        purely local testing only).
   PORT                - what port to listen on when run directly with
                         `python app.py` (most hosts set this for you and
                         expect gunicorn to read it instead - see Procfile).
@@ -98,28 +106,10 @@ def index():
     return render_template(
         "index.html",
         llm_available=LLM_AVAILABLE,
-        regions=lookup.VALID_REGIONS,
-        result=None,
+        phrased=None,
+        verified=None,
+        heads_up=[],
         query=None,
-    )
-
-
-@app.route("/lookup", methods=["POST"])
-@_require_basic_auth
-def structured_lookup():
-    """Structured lookup - same deterministic path agent.py's structured_lookup() uses."""
-    identifier = request.form.get("identifier", "").strip()
-    region = request.form.get("region", "").strip()
-
-    result = lookup.run_lookup(identifier, region, PRODUCTS, REQUIREMENTS)
-    report = lookup.format_result(result)
-
-    return render_template(
-        "index.html",
-        llm_available=LLM_AVAILABLE,
-        regions=lookup.VALID_REGIONS,
-        result=report,
-        query=f"{identifier!r} / {region!r} (structured)",
     )
 
 
@@ -136,15 +126,15 @@ def ask():
     user_text = request.form.get("question", "").strip()
     if not user_text:
         return render_template(
-            "index.html", llm_available=LLM_AVAILABLE, regions=lookup.VALID_REGIONS,
-            result=None, query=None,
+            "index.html", llm_available=LLM_AVAILABLE,
+            phrased=None, verified=None, heads_up=[], query=None,
         )
 
     if not LLM_AVAILABLE:
         report = "[Plain-English mode needs an Anthropic API key - see README.md.]"
         return render_template(
-            "index.html", llm_available=LLM_AVAILABLE, regions=lookup.VALID_REGIONS,
-            result=report, query=user_text,
+            "index.html", llm_available=LLM_AVAILABLE,
+            phrased=report, verified=None, heads_up=[], query=user_text,
         )
 
     out_of_scope = llm_agent.detect_out_of_scope_topics(user_text)
@@ -153,14 +143,14 @@ def ask():
     if extracted is None:
         report = (
             "[Couldn't reach the Claude API to interpret that question, or the "
-            "response couldn't be read. Try the structured lookup form instead, "
-            "or resubmit your question.]"
+            "response couldn't be read. Please resubmit your question - if this "
+            "keeps happening, try rephrasing it to name both a product and a "
+            "destination region explicitly.]"
         )
-        if out_of_scope:
-            report = "\n".join(f"[Heads up] {h['note']}" for h in out_of_scope) + "\n\n" + report
+        heads_up = [h["note"] for h in out_of_scope] if out_of_scope else []
         return render_template(
-            "index.html", llm_available=LLM_AVAILABLE, regions=lookup.VALID_REGIONS,
-            result=report, query=user_text,
+            "index.html", llm_available=LLM_AVAILABLE,
+            phrased=report, verified=None, heads_up=heads_up, query=user_text,
         )
 
     identifier = extracted["identifier"]
@@ -170,37 +160,39 @@ def ask():
     if not identifier or not region:
         report = (
             f"[Could not confidently identify both a product and a region in that "
-            f"question (got identifier={identifier!r}, region={region!r}). Try the "
-            "structured lookup form below instead, or rephrase your question to "
-            "name both a product and a destination region explicitly.]"
+            f"question (got identifier={identifier!r}, region={region!r}). Try "
+            "rephrasing your question to name both a specific product (name, SKU, "
+            "or RMN) and a destination region explicitly.]"
         )
         return render_template(
-            "index.html", llm_available=LLM_AVAILABLE, regions=lookup.VALID_REGIONS,
-            result=report, query=user_text,
+            "index.html", llm_available=LLM_AVAILABLE,
+            phrased=report, verified=None, heads_up=[], query=user_text,
         )
 
     result = lookup.run_lookup(identifier, region, PRODUCTS, REQUIREMENTS,
                                 requested_domains=requested_domains)
-    verified_report = lookup.format_result(result)
-    phrased = llm_agent.phrase_answer(LLM_CLIENT, LLM_MODEL, user_text, verified_report, result.ok)
+    # format_result() (table + summary + itemized report) is what
+    # phrase_answer() reads to write the prose answer, so the model always
+    # sees the full picture - but format_result_verified() (itemized report
+    # only, no table/summary) is what's actually SHOWN beneath that answer.
+    # User testing found the table needed a legend most people wouldn't
+    # have, and the summary was redundant with the phrased answer above it;
+    # the itemized report (with citations) was the part called genuinely
+    # helpful, and it's also the only part that isn't LLM-generated.
+    full_report = lookup.format_result(result)
+    verified_report = lookup.format_result_verified(result)
+    phrased = llm_agent.phrase_answer(LLM_CLIENT, LLM_MODEL, user_text, full_report, result.ok)
 
-    parts = []
-    for hit in extracted.get("out_of_scope_topics", out_of_scope):
-        parts.append(f"[Heads up] {hit['note']}")
-    if phrased:
-        parts.append(phrased)
-        parts.append("\n--- Verified source data (unedited) ---")
-        parts.append(verified_report)
-    else:
-        parts.append(
+    heads_up = [hit["note"] for hit in extracted.get("out_of_scope_topics", out_of_scope)]
+    if not phrased:
+        phrased = (
             "[Couldn't reach the Claude API to phrase a summary - showing the "
             "verified lookup result directly.]"
         )
-        parts.append(verified_report)
 
     return render_template(
-        "index.html", llm_available=LLM_AVAILABLE, regions=lookup.VALID_REGIONS,
-        result="\n".join(parts), query=user_text,
+        "index.html", llm_available=LLM_AVAILABLE,
+        phrased=phrased, verified=verified_report, heads_up=heads_up, query=user_text,
     )
 
 
