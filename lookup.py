@@ -8,6 +8,7 @@ row in the sample dataset, or it says plainly that it found nothing.
 from __future__ import annotations
 
 import csv
+import difflib
 import os
 from dataclasses import dataclass, field
 from typing import Optional
@@ -76,6 +77,12 @@ class LookupResult:
     # narrowing was requested, so every rendering function below shows the
     # full seven-domain profile, exactly as before domain scoping existed.
     requested_domains: list = field(default_factory=list)
+    # Set only when find_product_verbose() resolved the identifier via the
+    # substring/fuzzy fallback rather than an exact match - "" for an exact
+    # match, since there's nothing to explain. Surfaced in the rendered
+    # report so a partial or slightly-misspelled identifier never silently
+    # turns into a different product name without saying so.
+    match_note: str = ""
 
 
 def load_products(path: str = PRODUCT_MASTER_PATH) -> list[Product]:
@@ -103,18 +110,143 @@ def normalize_region(raw: str) -> Optional[str]:
 
 
 def find_product(identifier: str, products: list[Product]) -> Optional[Product]:
-    """Exact-match lookup (case-insensitive) across product_name, sku, and rmn."""
+    """Case-insensitive lookup across product_name, sku, and rmn. See
+    find_product_verbose() for the full matching rules - this just drops
+    the explanatory note and candidate suggestions for callers that don't
+    need them."""
+    product, _, _ = find_product_verbose(identifier, products)
+    return product
+
+
+def _candidate_group_key(name: str) -> str:
+    """First two words of a product name, lowercased - a rough stand-in for
+    'model family' (e.g. 'poly gc8', 'poly tc10', 'hp elitedesk')."""
+    return " ".join(name.split()[:2]).lower()
+
+
+def _diverse_sample(names: list[str], cap: int) -> list[str]:
+    """
+    Round-robin across name families (see _candidate_group_key) so a
+    suggestion list never lets one family with many SKU variants (e.g. 14
+    'Poly TC10 ...' listings) crowd out a family with only one or two (e.g.
+    'Poly GC8 ...') - every distinct family gets a representative before any
+    family gets a second one, for as long as the cap allows. Without this, a
+    plain alphabetical or positional truncation can silently drop an entire
+    plausible family from the suggestions.
+    """
+    groups: dict[str, list[str]] = {}
+    order: list[str] = []
+    for n in sorted(names):
+        key = _candidate_group_key(n)
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(n)
+    result: list[str] = []
+    idx = 0
+    while len(result) < cap and any(groups[k] for k in order):
+        key = order[idx % len(order)]
+        if groups[key]:
+            result.append(groups[key].pop(0))
+        idx += 1
+    return result
+
+
+def find_product_verbose(identifier: str, products: list[Product]) -> tuple[Optional[Product], str, list[str]]:
+    """
+    Resolve identifier to a Product, trying four tiers in order, and return
+    (product_or_None, note, candidates):
+      - note is "" for an exact match (nothing to explain) and a short
+        human-readable explanation when the match came from a fallback tier
+        instead.
+      - candidates is a short list of product names whenever a fallback
+        tier found more than one plausible match, so a caller can suggest
+        them instead of guessing which one was meant.
+
+    1. Exact match (case-insensitive) on product_name, sku, or rmn - the
+       original, unchanged behavior.
+    2. Literal phrase match: the whole typed text appears, contiguously, in
+       a product_name - resolved automatically only when exactly one
+       product qualifies.
+    3. Word match: every individual word in the typed text appears
+       SOMEWHERE in a product_name, in any order, even run together as part
+       of a longer word (e.g. 'elite' + 'desk' inside 'EliteDesk') - broader
+       than tier 2, so it also catches names a literal phrase won't match.
+       Resolved automatically only when exactly one product qualifies AND
+       tier 2 found none; anything else becomes candidates.
+    4. Close/typo-tolerant match on product_name (difflib, case-insensitive),
+       for near-misses neither containment check above catches - a
+       misspelled word, a transposed digit, etc.
+
+    Tiers 2 and 3 auto-resolve on a single hit because containment is a
+    strong, literal signal - the typed text (or every word of it) is
+    actually present in that one name. Tier 4 is different: character
+    similarity is a much weaker signal, so it NEVER auto-resolves, even to
+    a single hit - every fuzzy match is offered as a candidate to confirm,
+    not assumed. More broadly, whenever more than one product is plausible
+    at any tier, this returns them as candidates rather than picking one
+    (Grounding Rule 3: this app does not guess) - guessing among several
+    real products would be exactly the kind of invented answer this app
+    exists to avoid, even when one candidate looks like the "obvious" pick.
+    """
     if not identifier:
-        return None
-    key = identifier.strip().lower()
+        return None, "", []
+    raw = identifier.strip()
+    key = raw.lower()
+    if not key:
+        return None, "", []
+
     for p in products:
-        if p.product_name.strip().lower() == key:
-            return p
-        if p.sku.strip().lower() == key:
-            return p
-        if p.rmn.strip().lower() == key:
-            return p
-    return None
+        name_l = p.product_name.strip().lower()
+        if name_l == key or p.sku.strip().lower() == key or p.rmn.strip().lower() == key:
+            return p, "", []
+
+    literal_hits = [p for p in products if key in p.product_name.strip().lower()]
+    if len(literal_hits) == 1:
+        p = literal_hits[0]
+        return p, (
+            f"Matched '{raw}' to '{p.product_name}' by partial name - that "
+            "exact text isn't a product name, SKU, or RMN on file, but only "
+            "one sample product's name contains it."
+        ), []
+
+    words = key.split()
+    word_hits = []
+    if words:
+        word_hits = [
+            p for p in products
+            if all(w in p.product_name.strip().lower() for w in words)
+        ]
+
+    if len(word_hits) == 1 and not literal_hits:
+        p = word_hits[0]
+        return p, (
+            f"Matched '{raw}' to '{p.product_name}' - every word you typed "
+            "appears in this product's name, though not as one exact phrase."
+        ), []
+
+    candidates: list[str] = []
+    if len(literal_hits) > 1:
+        candidates = sorted({p.product_name for p in literal_hits})
+    elif 1 < len(word_hits) <= 40:
+        # More than 40 is treated as too vague to be a useful suggestion
+        # list (e.g. a single very common word) rather than a real family
+        # of near-matches - falls through to the fuzzy tier below instead.
+        candidates = sorted({p.product_name for p in word_hits})
+
+    if not candidates:
+        lower_to_name: dict[str, str] = {}
+        for p in products:
+            lower_to_name.setdefault(p.product_name.strip().lower(), p.product_name)
+        close = difflib.get_close_matches(key, list(lower_to_name.keys()), n=15, cutoff=0.72)
+        if close:
+            candidates = [lower_to_name[c] for c in close]
+
+    # Sample down to a display-sized list without letting one prolific
+    # model family (e.g. 14 "Poly TC10 ..." SKUs) push a smaller, equally
+    # real family (e.g. 2 "Poly GC8 ..." SKUs) out of the suggestions
+    # entirely - see _diverse_sample().
+    return None, "", _diverse_sample(candidates, 8)
 
 
 def get_requirements(category: str, region: str, requirements: list[Requirement]) -> dict:
@@ -161,21 +293,32 @@ def run_lookup(identifier: str, region_raw: str,
             ),
         )
 
-    product = find_product(identifier, products)
+    product, match_note, candidates = find_product_verbose(identifier, products)
     if product is None:
+        if candidates:
+            suggestion_lines = "\n".join(f"  - {c}" for c in candidates)
+            message = (
+                f"No single product matching '{identifier}' was found, but its name is "
+                "close to more than one sample product, so this app will not guess "
+                "which one you meant (Grounding Rule 3). Possible matches:\n"
+                f"{suggestion_lines}\n\n"
+                "Try again with the exact name (or a SKU/RMN) from the list above."
+            )
+        else:
+            message = (
+                f"No product matching '{identifier}' was found in the sample product "
+                "master (checked product name, SKU, and RMN - exact, partial-name, and "
+                "close-match). Double-check the identifier for typos, or confirm it's "
+                "one of the sample products this prototype includes - it does not cover "
+                "HP's full catalog. If the identifier is correct and just isn't in this "
+                "dataset, this app will not guess (Grounding Rule 3) - escalate to a "
+                "regulatory subject-matter expert for human review (Grounding Rule 4) "
+                "rather than assuming no requirements apply."
+            )
         return LookupResult(
             ok=False,
             reason_code="unmatched_product",
-            message=(
-                f"No product matching '{identifier}' was found in the sample product "
-                "master (checked product name, SKU, and RMN, exact match only). "
-                "Double-check the identifier for typos, or confirm it's one of the "
-                "sample products this prototype includes - it does not cover HP's full "
-                "catalog. If the identifier is correct and just isn't in this dataset, "
-                "this app will not guess (Grounding Rule 3) - escalate to a regulatory "
-                "subject-matter expert for human review (Grounding Rule 4) rather than "
-                "assuming no requirements apply."
-            ),
+            message=message,
         )
 
     grouped = get_requirements(product.category, region, requirements)
@@ -214,12 +357,13 @@ def run_lookup(identifier: str, region_raw: str,
             region=region,
             reason_code="zero_requirements_on_file",
             requested_domains=requested_domains,
+            match_note=match_note,
             message=scope_message,
         )
 
     return LookupResult(
         ok=True, product=product, region=region, requirements_by_domain=grouped,
-        requested_domains=requested_domains,
+        requested_domains=requested_domains, match_note=match_note,
     )
 
 
@@ -417,6 +561,18 @@ def _scope_line(result: LookupResult) -> list[str]:
     return [f"Scoped to: {scope_note} (ask without naming a domain for the full profile)"]
 
 
+def _match_note_line(result: LookupResult) -> list[str]:
+    """
+    A one-line note when find_product_verbose() resolved the product via
+    its substring/fuzzy fallback rather than an exact match - empty list
+    (nothing appended) otherwise, so an exact-match report is byte-identical
+    to before that fallback existed.
+    """
+    if not result.match_note:
+        return []
+    return [result.match_note]
+
+
 def at_a_glance(result: LookupResult) -> str:
     """
     Just the header line + the "At a glance" table, standing on its own.
@@ -432,7 +588,8 @@ def at_a_glance(result: LookupResult) -> str:
     that case.
     """
     if not result.ok:
-        return f"\nHuman review required.\n\n{result.message}\n"
+        note = f"{result.match_note}\n\n" if result.match_note else ""
+        return f"\nHuman review required.\n\n{note}{result.message}\n"
 
     flat = _flatten_ordered(result)
     lines = [
@@ -440,28 +597,40 @@ def at_a_glance(result: LookupResult) -> str:
         f"(SKU {result.product.sku}, RMN {result.product.rmn})",
         f"Category: {result.product.category}   Destination region: {result.region}",
     ]
+    lines.extend(_match_note_line(result))
     lines.extend(_scope_line(result))
     lines.append("=" * 78)
     lines.extend(_build_table_lines(flat))
     return "\n".join(lines)
 
 
-def _summary_and_itemized_lines(result: LookupResult, flat: list) -> list[str]:
+def _itemized_report_lines(result: LookupResult, flat: list, *, note_table_above: bool = True) -> list[str]:
     """
-    The urgency-bucketed summary and the full domain-grouped itemized report
-    - everything format_result() shows *after* the At a glance table.
-    Factored out so format_result_details() can reuse it without also
-    rebuilding the header + table that at_a_glance() already renders on its
-    own (see that function's docstring for why the two must stay separable).
+    Just the "FULL ITEMIZED REPORT" section (grouped by domain, one block
+    per requirement with its full text and citation) - the one part of a
+    report that is never LLM-generated, so it's what a reader actually
+    checks a phrased answer against. Factored out of
+    _summary_and_itemized_lines() so a caller can include the itemized
+    report without also pulling in the urgency-bucketed summary - see
+    format_result_verified(), used by the web /ask route after user testing
+    found the summary block added little once a phrased answer already
+    covered the same ground in prose, while the itemized report itself was
+    called out as genuinely helpful.
+
+    note_table_above - set False when this is rendered without the "At a
+    glance" table appearing anywhere above it (format_result_verified()),
+    so the heading doesn't point at a table that isn't there.
     """
     by_domain: dict[str, list[tuple[int, "Requirement"]]] = {}
     for n, r, domain_key in flat:
         by_domain.setdefault(domain_key, []).append((n, r))
 
-    lines = ["-" * 78]
-    lines.extend(_build_summary_lines(result, flat))
-    lines.append("\n" + "-" * 78)
-    lines.append("FULL ITEMIZED REPORT (grouped by domain; row numbers match the table above)")
+    header = (
+        "FULL ITEMIZED REPORT (grouped by domain; row numbers match the table above)"
+        if note_table_above else
+        "FULL ITEMIZED REPORT (grouped by domain)"
+    )
+    lines = ["\n" + "-" * 78, header]
     for domain_key, domain_label in _active_domain_order(result):
         rows = by_domain.get(domain_key, [])
         lines.append(f"\n-- {domain_label} --")
@@ -477,17 +646,35 @@ def _summary_and_itemized_lines(result: LookupResult, flat: list) -> list[str]:
             lines.append(f"  [#{n}] {status_tag} {format_tag}")
             lines.append(f"    Requirement: {r.requirement}")
             lines.append(f"    Source: {r.citation_source}  (last verified: {r.last_verified})")
-    lines.append("\n" + "=" * 78)
-    lines.append(
+    return lines
+
+
+def _closing_notice_lines() -> list[str]:
+    """The standing disclaimer + escalation reminder that closes every
+    successful report, regardless of which sections precede it."""
+    return [
+        "\n" + "=" * 78,
         "This is a prototype built on a small sample dataset - it is NOT a substitute "
-        "for sign-off from a regulatory subject-matter expert."
-    )
-    lines.append(
+        "for sign-off from a regulatory subject-matter expert.",
         "Grounding rule: if any requirements above read as conflicting, or you're "
         "unsure which one applies, treat that as a signal to escalate for human "
         "review (Grounding Rule 4) - this app does not attempt to resolve "
-        "conflicting source data on its own."
-    )
+        "conflicting source data on its own.",
+    ]
+
+
+def _summary_and_itemized_lines(result: LookupResult, flat: list) -> list[str]:
+    """
+    The urgency-bucketed summary and the full domain-grouped itemized report
+    - everything format_result() shows *after* the At a glance table.
+    Factored out so format_result_details() can reuse it without also
+    rebuilding the header + table that at_a_glance() already renders on its
+    own (see that function's docstring for why the two must stay separable).
+    """
+    lines = ["-" * 78]
+    lines.extend(_build_summary_lines(result, flat))
+    lines.extend(_itemized_report_lines(result, flat))
+    lines.extend(_closing_notice_lines())
     return lines
 
 
@@ -504,7 +691,8 @@ def format_result(result: LookupResult) -> str:
     available even though it is told not to reproduce it.
     """
     if not result.ok:
-        return f"\nHuman review required.\n\n{result.message}\n"
+        note = f"{result.match_note}\n\n" if result.match_note else ""
+        return f"\nHuman review required.\n\n{note}{result.message}\n"
 
     flat = _flatten_ordered(result)
     lines = [
@@ -512,6 +700,7 @@ def format_result(result: LookupResult) -> str:
         f"(SKU {result.product.sku}, RMN {result.product.rmn})",
         f"Category: {result.product.category}   Destination region: {result.region}",
     ]
+    lines.extend(_match_note_line(result))
     lines.extend(_scope_line(result))
     lines.append("=" * 78)
     lines.extend(_build_table_lines(flat))
@@ -533,3 +722,35 @@ def format_result_details(result: LookupResult) -> str:
         return format_result(result)
     flat = _flatten_ordered(result)
     return "\n".join(_summary_and_itemized_lines(result, flat))
+
+
+
+def format_result_verified(result: LookupResult) -> str:
+    """
+    A shorter alternative to format_result(), used by the web /ask route to
+    show what's actually on file underneath an LLM-phrased answer. Includes
+    the header, any match note, and the full itemized report with
+    citations (the one part of a response that is never LLM-generated, so
+    it's what a reader checks the phrased answer against) - but skips the
+    "At a glance" table and the urgency-bucketed summary that format_result()
+    also includes. User testing found the table needed a legend most people
+    wouldn't have on first look, and the summary "didn't have a lot of
+    purpose" once a phrased answer above it already covered the same ground
+    in prose - but the itemized report itself was called out as genuinely
+    helpful. Identical to format_result() for a failed lookup, since
+    there's no table or summary to begin with in that case.
+    """
+    if not result.ok:
+        return format_result(result)
+
+    flat = _flatten_ordered(result)
+    lines = [
+        f"\nCompliance requirements for: {result.product.product_name} "
+        f"(SKU {result.product.sku}, RMN {result.product.rmn})",
+        f"Category: {result.product.category}   Destination region: {result.region}",
+    ]
+    lines.extend(_match_note_line(result))
+    lines.extend(_scope_line(result))
+    lines.extend(_itemized_report_lines(result, flat, note_table_above=False))
+    lines.extend(_closing_notice_lines())
+    return "\n".join(lines)
