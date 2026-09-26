@@ -5,18 +5,58 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Compliance Lookup Agent (MVP prototype)</title>
   <style>
-    body { font-family: -apple-system, Segoe UI, Helvetica, Arial, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+    /*
+      Color palette source: HP's internal "HP Digital Guidelines" deck
+      (Colors section), cross-checked against the actual vector fill color
+      in the user-supplied logo_HP_Electric_Blue_keyline.pdf:
+        --hp-electric-blue: #024AD8  (primary action / link color - read
+                             directly from the PDF's embedded RGB fill,
+                             0.008/0.29/0.847; the deck's on-screen label
+                             read as #0246D8, a one-digit difference from
+                             screen-legibility limits, so the PDF's exact
+                             machine-encoded value wins)
+        --hp-black:         #1A1A1A  (default text color - HP explicitly
+                             softens this from pure #000 for screen
+                             readability, which is the fix for the
+                             black-background eye-strain complaint)
+        --hp-white:         #FFFFFF  (default background - also confirmed
+                             as the PDF logo's own background fill, 1/1/1)
+      The neutral grays and the light blue tint below are NOT copied from
+      an exact HP hex (the deck's gray-scale swatch labels weren't legible
+      at the resolution available) - they're ordinary accessible mid-tones
+      chosen to sit "alongside black and white" the way the deck describes,
+      not an official HP token. Same for the amber heads-up banner, which
+      predates this pass and is left as-is.
+    */
+    :root {
+      --hp-electric-blue: #024ad8;
+      --hp-black: #1a1a1a;
+      --hp-white: #ffffff;
+    }
+    body { font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: var(--hp-black); background: var(--hp-white); }
     h1 { font-size: 1.4rem; margin-bottom: 0.2rem; }
     .subtitle { color: #555; margin-top: 0; margin-bottom: 1.5rem; }
     .banner { background: #fff8e1; border: 1px solid #e0c060; border-radius: 6px; padding: 0.75rem 1rem; margin-bottom: 1.5rem; font-size: 0.92rem; }
     fieldset { border: 1px solid #ccc; border-radius: 6px; margin-bottom: 1.5rem; padding: 1rem; }
     legend { font-weight: 600; padding: 0 0.4rem; }
     label { display: block; margin-top: 0.6rem; font-size: 0.9rem; }
-    input[type=text], select, textarea { width: 100%; padding: 0.4rem; margin-top: 0.2rem; box-sizing: border-box; font-size: 0.95rem; }
-    button { margin-top: 0.8rem; padding: 0.5rem 1.2rem; font-size: 0.95rem; cursor: pointer; }
-    pre { background: #0d1117; color: #e6edf3; padding: 1rem; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; font-size: 0.85rem; line-height: 1.4; }
-    .query-echo { color: #555; font-size: 0.85rem; margin-bottom: 0.3rem; }
+    textarea { width: 100%; padding: 0.4rem; margin-top: 0.2rem; box-sizing: border-box; font-size: 0.95rem; font-family: inherit; }
+    button { margin-top: 0.8rem; padding: 0.5rem 1.2rem; font-size: 0.95rem; cursor: pointer; background: var(--hp-electric-blue); color: var(--hp-white); border: none; border-radius: 4px; }
+    button:hover:not(:disabled) { background: #0139a8; }
+    button:disabled { cursor: wait; opacity: 0.6; }
     .disabled-note { color: #888; font-size: 0.85rem; }
+    .status-note { color: #666; font-size: 0.85rem; margin-top: 0.5rem; min-height: 1.1em; }
+
+    .heads-up { background: #fff4e5; border: 1px solid #e8b463; border-radius: 6px; padding: 0.7rem 1rem; margin-bottom: 0.9rem; font-size: 0.9rem; color: #6b4400; }
+    .heads-up + .heads-up { margin-top: -0.4rem; }
+    .answer-label { font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--hp-electric-blue); margin-bottom: 0.4rem; }
+    .answer { background: #f4f7fb; border: 1px solid #cfd9e8; border-radius: 6px; padding: 1rem 1.25rem; font-size: 1rem; line-height: 1.6; color: var(--hp-black); white-space: pre-wrap; }
+    details.verified { margin-top: 1.1rem; }
+    details.verified > summary { cursor: pointer; font-weight: 600; color: var(--hp-electric-blue); padding: 0.5rem 0.1rem; list-style: none; }
+    details.verified > summary::-webkit-details-marker { display: none; }
+    details.verified > summary::before { content: "\25B8 "; }
+    details.verified[open] > summary::before { content: "\25BE "; }
+    pre.verified-data { background: #f6f8fa; color: var(--hp-black); border: 1px solid #d7dee8; padding: 1rem; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; font-size: 0.83rem; line-height: 1.55; margin-top: 0.4rem; }
   </style>
 </head>
 <body>
@@ -30,42 +70,52 @@
   </div>
 
   <fieldset>
-    <legend>Structured lookup</legend>
-    <form method="post" action="/lookup">
-      <label for="identifier">Product identifier (name, SKU, or RMN)</label>
-      <input type="text" id="identifier" name="identifier" required placeholder="e.g. Poly Voyager Focus 2">
-
-      <label for="region">Destination region</label>
-      <select id="region" name="region" required>
-        <option value="" disabled selected>Select a region</option>
-        {% for r in regions %}
-        <option value="{{ r }}">{{ r }}</option>
-        {% endfor %}
-      </select>
-
-      <button type="submit">Look up</button>
-    </form>
-  </fieldset>
-
-  <fieldset>
-    <legend>Ask a question in plain English</legend>
+    <legend>Ask a question</legend>
     {% if not llm_available %}
-    <p class="disabled-note">Plain-English mode is disabled - no Anthropic API key is configured on this deployment. Use the structured lookup form above instead.</p>
+    <p class="disabled-note">This deployment isn't currently configured to answer questions - no Anthropic API key is set. Contact the site owner.</p>
     {% endif %}
-    <form method="post" action="/ask">
+    <form method="post" action="/ask" id="ask-form">
       <label for="question">Question</label>
-      <textarea id="question" name="question" rows="2" {% if not llm_available %}disabled{% endif %} placeholder="e.g. What do I need for a Poly Voyager Focus 2 shipping to Taiwan?"></textarea>
-      <button type="submit" {% if not llm_available %}disabled{% endif %}>Ask</button>
+      <textarea id="question" name="question" rows="2" {% if not llm_available %}disabled{% endif %} placeholder="e.g. What do I need for a Poly Voyager Focus 2 shipping to Taiwan?">{{ query or "" }}</textarea>
+      <button type="submit" id="ask-button" {% if not llm_available %}disabled{% endif %}>Ask</button>
+      <p class="status-note" id="ask-status" aria-live="polite"></p>
     </form>
   </fieldset>
 
-  {% if result %}
+  {% if phrased %}
   <fieldset>
     <legend>Result</legend>
-    {% if query %}<p class="query-echo">Query: {{ query }}</p>{% endif %}
-    <pre>{{ result }}</pre>
+
+    {% for note in (heads_up or []) %}
+    <div class="heads-up">{{ note }}</div>
+    {% endfor %}
+
+    <div class="answer-label">Answer</div>
+    <div class="answer">{{ phrased }}</div>
+
+    {% if verified %}
+    <details class="verified">
+      <summary>Verified source data (unedited)</summary>
+      <pre class="verified-data">{{ verified }}</pre>
+    </details>
+    {% endif %}
   </fieldset>
   {% endif %}
+
+  <script>
+    (function () {
+      var form = document.getElementById("ask-form");
+      var button = document.getElementById("ask-button");
+      var status = document.getElementById("ask-status");
+      if (!form || !button || !status) return;
+      form.addEventListener("submit", function () {
+        if (button.disabled) return;  // avoid double-submit
+        button.disabled = true;
+        button.textContent = "Thinking...";
+        status.textContent = "Usually just a few seconds - the first question after this app has been idle can take up to a minute.";
+      });
+    })();
+  </script>
 
 </body>
 </html>
