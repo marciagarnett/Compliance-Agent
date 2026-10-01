@@ -1,0 +1,7 @@
+run_timestamp_utc,product_master_added,product_master_removed,compliance_requirements_added,compliance_requirements_removed,changed
+20261001T034641Z,0,0,0,0,False
+20261001T034650Z,0,0,1,0,True
+20261001T034704Z,0,0,0,1,True
+20261001T042509Z,0,0,1,0,True
+20261001T042521Z,0,0,0,1,True
+20261001T043844Z,0,0,0,0,False
