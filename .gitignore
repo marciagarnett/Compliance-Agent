@@ -1,0 +1,20 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+activity_log.txt
+
+# Real internal HP source workbooks and their zipped backup - never commit
+# these. The running app (agent.py / app.py) only ever reads the sample
+# CSVs in data/, never these - see source_index.md and README.md.
+reference/
+ground_truth.zip
+GROUND_TRUTH.md
+
+# Working scratch files / old drafts - not part of the project.
+_to_delete/
+*.bak
+*.bak2
+*.old
+_tmp_*.py
