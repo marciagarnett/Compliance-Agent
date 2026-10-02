@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Weekly sync: pulls from the mock "source system" feeds in
+Weekly sync: pulls from the "source system" feeds in
 source_systems_integration/ (standing in for HP's real PLM/ERP and the various
 compliance teams' own systems) and refreshes data/product_master.csv and
 data/compliance_requirements.csv - the single source of truth the live

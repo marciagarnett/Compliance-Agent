@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-One-time setup: partitions the agent's current data/*.csv into mock
+One-time setup: partitions the agent's current data/*.csv into a
 "source system" feeds that stand in for HP's real systems of record.
 
 This exists so the business-process simulation has something realistic to
