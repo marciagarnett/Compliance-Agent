@@ -81,12 +81,14 @@ OUT_OF_SCOPE_TOPICS: dict[str, tuple[tuple[str, ...], str]] = {
         "everything it knows is a static, hand-curated sample (see "
         "README.md 'Does not cover').",
     ),
-    "fuzzy_or_translation": (
-        ("translate", "translation", "fuzzy match", "similar product",
-         "multi-language", "multilingual"),
-        "Fuzzy/semantic product matching, translation, and multi-language "
-        "output are explicitly out of scope - identifier lookup is exact-"
-        "match only (see README.md 'Does not cover').",
+    "translation_or_multilang": (
+        ("translate", "translation", "multi-language", "multilingual"),
+        "Translation and multi-language output are explicitly out of scope - "
+        "input and output are English only (see README.md 'Does not "
+        "cover'). Product-identifier matching itself does tolerate a "
+        "partial name, extra/out-of-order words, and small typos (see "
+        "lookup.py's find_product_verbose()) - that part is supported, not "
+        "out of scope.",
     ),
 }
 

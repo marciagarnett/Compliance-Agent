@@ -16,7 +16,9 @@ Scope, data model, and known gaps are documented in README.md - read that
 first if anything below is surprising. Short version: this is a prototype
 covering the full active HP/Poly catalog sample (1,652 products, 49
 categories - notebooks, desktops, displays, and Poly-brand audio/video
-accessories) across FOUR regions (EU/UK, US, China, Taiwan), built on a
+accessories). Regions covered are data-driven (see lookup.VALID_REGIONS) -
+starting from EU/UK, US, China, and Taiwan, now expanded with a first
+EMEA-region pass (Bluetooth Headset category only so far) - built on a
 small sample dataset modeled on real HP WTR-program document structures.
 """
 from __future__ import annotations
@@ -31,17 +33,26 @@ import llm_agent
 
 load_dotenv()  # reads .env if present; harmless if it doesn't exist
 
-BANNER = """
+def _banner() -> str:
+    # Regions line is built from lookup.VALID_REGIONS (itself derived from
+    # data/compliance_requirements.csv - see lookup._discover_valid_regions)
+    # rather than hardcoded, so it can never silently go stale again as
+    # regions are added.
+    regions_line = ", ".join(lookup.VALID_REGIONS)
+    return f"""
 ==============================================================================
  Compliance Lookup Agent (MVP prototype)
 ==============================================================================
  Covers: full active HP/Poly catalog sample - 1,652 products, 49 categories
- Regions covered: EU/UK, US, China, Taiwan
+ Regions covered: {regions_line}
  Domains covered: environmental/sustainability, safety/EMC/telecom,
                   hearing aid compatibility, cybersecurity, battery safety,
                   trade/customs, warranty documentation
  This is a prototype on a small SAMPLE dataset - not HP's live compliance
  content. See README.md for full scope, sources, and known gaps.
+ Note: region coverage varies by product category - not every domain/region
+ combination has data for every category yet (an honest gap, not "nothing
+ required"; the app will tell you when it hits one).
 ==============================================================================
 """
 
@@ -212,7 +223,7 @@ def run_menu(client, model, products, requirements, llm_available) -> None:
 
 
 def main() -> None:
-    print(BANNER)
+    print(_banner())
 
     try:
         products = lookup.load_products()

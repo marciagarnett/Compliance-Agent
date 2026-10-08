@@ -264,6 +264,185 @@ ROWS = [
      "create ambiguity about the length and type of warranty offered.",
      "print", "existing", "Now",
      "WW_Content_Requirements_FY25_FINAL.xlsx - APJ tab (Taiwan row)", "2026-09-09"),
+# ---------------- EMEA (expanded beyond EU/UK) ----------------
+    # Added 2026-10-07. Source: Regulatory Requirements Summary.xlsx,
+    # "EMEA ITE" tab - the same workbook the original EU/UK safety_emc_telecom
+    # rows above cite. Scope of this pass: safety_emc_telecom only, for the
+    # 25 EMEA countries/territories this sheet lists individually (beyond
+    # the already-covered "EU and EU-like* countries" bloc and UK). Where
+    # the sheet left a field blank (no telecom data for a country, etc.),
+    # that gap is stated explicitly below rather than invented (Grounding
+    # Rule 3). environmental_sustainability, trade_customs, battery_safety,
+    # warranty_documentation, hearing_aid_compatibility, and cybersecurity
+    # for these 25 countries are NOT yet covered - they depend on other
+    # reference workbooks (Machinery_ITE_Import_or_Importer_controls.xlsx,
+    # WTR Regulatory Manual.xlsx, WW_Content_Requirements_FY25_FINAL.xlsx's
+    # EMEA & ISE tab) not yet transcribed; that is a deliberate gap for this
+    # pass, not a "not required" claim.
+    ("Bluetooth Headset", "South Africa", "safety_emc_telecom",
+     "South Africa (NRCS/ICASA) requires SANS 60950-1 / IEC 62368-1 safety and EN 55032 EMC "
+     "compliance, plus ICASA Type Approval for the Bluetooth/RF module under EN 300328-2-2001, "
+     "EN 301-489 pt 1 & 7, and GSM EN 301-511; evidenced by an NRCS Letter of Authority, EMI "
+     "certificate, and ICASA Type Approval Certificate.",
+     "either", "existing", "Now",
+     "Regulatory Requirements Summary.xlsx - EMEA ITE tab (South Africa rows)", "2026-10-07"),
+    ("Bluetooth Headset", "Israel", "safety_emc_telecom",
+     "Israel (Standards Institute of Israel) requires IS 1121 (IEC 62368-1) safety and IS 961 "
+     "(CISPR 22/CISPR 32) EMC compliance, plus verification against EU harmonized radio standards "
+     "(EN 300328, EN 301489, EN 301893, EN 300440, EN 301908, EN 301511) for the Bluetooth/Wi-Fi "
+     "module; an EU DoC or equivalent test report satisfies all of these.",
+     "online", "existing", "Now",
+     "Regulatory Requirements Summary.xlsx - EMEA ITE tab (Israel rows)", "2026-10-07"),
+    ("Bluetooth Headset", "Ukraine", "safety_emc_telecom",
+     "Ukraine requires conformity assessment to the UA LVE TR safety technical regulation "
+     "(Resolution #1067) and the UA EMC TR EMC technical regulation (Resolution #1077), each "
+     "evidenced by a National Statement of Conformity (NSoC), plus a UA RED TR conformity "
+     "assessment (Decision #355) for the Bluetooth/Wi-Fi radio.",
+     "either", "existing", "Now",
+     "Regulatory Requirements Summary.xlsx - EMEA ITE tab (Ukraine rows)", "2026-10-07"),
+    ("Bluetooth Headset", "Armenia", "safety_emc_telecom",
+     "Armenia requires EurAsian Commission EAC TR 004/2011 and EAC TR 010/2011 safety "
+     "certification/declaration and EAC TR 020/2011 EMC certification/declaration; the source "
+     "sheet lists wired and wireless telecom requirements as low priority with no detailed "
+     "information on file - a real data gap, not a \"not required\" finding.",
+     "either", "existing", "Now",
+     "Regulatory Requirements Summary.xlsx - EMEA ITE tab (Armenia rows)", "2026-10-07"),
+    ("Bluetooth Headset", "Kazakhstan", "safety_emc_telecom",
+     "Kazakhstan requires the same EurAsian Commission EAC TR 004/2011 and EAC TR 010/2011 safety "
+     "and EAC TR 020/2011 EMC certification/declaration as other EAC member states, plus "
+     "country-specific WLAN testing and/or factory inspection administered by the Ministry of "
+     "Information and Communications for the wireless module.",
+     "either", "existing", "Now",
+     "Regulatory Requirements Summary.xlsx - EMEA ITE tab (Kazakhstan rows)", "2026-10-07"),
+    ("Bluetooth Headset", "Kyrgyzstan", "safety_emc_telecom",
+     "Kyrgyzstan requires the same EurAsian Commission EAC TR 004/2011 and EAC TR 010/2011 safety "
+     "and EAC TR 020/2011 EMC certification/declaration as other EAC member states; the source "
+     "sheet lists wired and wireless telecom requirements as low priority with no detailed "
+     "information currently on file.",
+     "either", "existing", "Now",
+     "Regulatory Requirements Summary.xlsx - EMEA ITE tab (Kyrgyzstan rows)", "2026-10-07"),
+    ("Bluetooth Headset", "Turkey", "safety_emc_telecom",
+     "Turkey's safety, EMC, and wired/wireless telecom requirements for ITE products follow EU "
+     "standards and directives directly, satisfied by the same EU DoC / test reports used for "
+     "the EU/UK market.",
+     "online", "existing", "Now",
+     "Regulatory Requirements Summary.xlsx - EMEA ITE tab (Turkey rows)", "2026-10-07"),
+    ("Bluetooth Headset", "Saudi Arabia", "safety_emc_telecom",
+     "Saudi Arabia (SASO) requires IEC 62368 safety compliance (IEC 60950 is no longer valid) "
+     "processed through the SABER platform by an in-country Importer of Record, with EU test "
+     "reports, user guides, a manufacturer's/importer's Declaration of Conformity (mDoC/iDoC), "
+     "and an undertaking letter when required; the wireless module is covered by EU test reports "
+     "against EU harmonized standards.",
+     "either", "existing", "Now",
+     "Regulatory Requirements Summary.xlsx - EMEA ITE tab (Saudi Arabia rows)", "2026-10-07"),
+    ("Bluetooth Headset", "Serbia", "safety_emc_telecom",
+     "Serbia requires the same EU General Product Safety Directive / Low Voltage Directive "
+     "safety, EMC Directive, and Radio Equipment Directive compliance as the EU/UK market, but "
+     "the Declaration of Conformity must specifically be provided in the Serbian language rather "
+     "than just English.",
+     "either", "existing", "Now",
+     "Regulatory Requirements Summary.xlsx - EMEA ITE tab (Serbia rows)", "2026-10-07"),
+    ("Bluetooth Headset", "Qatar", "safety_emc_telecom",
+     "Qatar's wireless-telecom requirements for Bluetooth/Wi-Fi-enabled products follow EU "
+     "harmonized standards; no additional country-specific safety or EMC certification "
+     "requirement is on file for this category in the source sheet.",
+     "online", "existing", "Now",
+     "Regulatory Requirements Summary.xlsx - EMEA ITE tab (Qatar rows)", "2026-10-07"),
+    ("Bluetooth Headset", "UAE", "safety_emc_telecom",
+     "The UAE's Telecommunications Regulatory Authority (TRA) requires Type Approval, with a "
+     "physical product sample, for both wired and wireless telecom modules, in addition to "
+     "EU-standards-based safety and EMC documentation (DoC, test reports, certificates, user "
+     "guides).",
+     "either", "existing", "Now",
+     "Regulatory Requirements Summary.xlsx - EMEA ITE tab (UAE rows)", "2026-10-07"),
+    ("Bluetooth Headset", "Bahrain", "safety_emc_telecom",
+     "Bahrain's Telecommunications Regulatory Authority (TRA) requires Type Approval for wired "
+     "and wireless telecom modules; safety and EMC follow EU standards with no additional "
+     "certification requirement on file.",
+     "either", "existing", "Now",
+     "Regulatory Requirements Summary.xlsx - EMEA ITE tab (Bahrain rows)", "2026-10-07"),
+    ("Bluetooth Headset", "Jordan", "safety_emc_telecom",
+     "Jordan's Telecommunications Regulatory Commission (TRC) requires a physical sample for "
+     "wired/wireless telecom type approval (a modular approach is accepted), and safety "
+     "compliance is verified case-by-case at the import/shipment-arrival stage against EU "
+     "standards.",
+     "either", "existing", "Now",
+     "Regulatory Requirements Summary.xlsx - EMEA ITE tab (Jordan rows)", "2026-10-07"),
+    ("Bluetooth Headset", "Morocco", "safety_emc_telecom",
+     "Morocco requires a Certificate of Conformity (PVoC) for every shipment for EN 62368-1 "
+     "safety and a Morocco-specific DoC for EN 55032 EMC, plus ANRT homologation (host-based) "
+     "for both the Bluetooth short-range module (EN 300328-2 / EN 301489-17) and the WLAN module "
+     "(EN 300328, EN 301893, EN 301489-17, EN 62311).",
+     "either", "existing", "Now",
+     "Regulatory Requirements Summary.xlsx - EMEA ITE tab (Morocco rows)", "2026-10-07"),
+    ("Bluetooth Headset", "Oman", "safety_emc_telecom",
+     "Oman requires an EU DoC for safety and EMC compliance and EU test reports / DoC / user "
+     "guides for the wireless module; no additional wired-telecom certification requirement is "
+     "on file for this category.",
+     "either", "existing", "Now",
+     "Regulatory Requirements Summary.xlsx - EMEA ITE tab (Oman rows)", "2026-10-07"),
+    ("Bluetooth Headset", "Zambia", "safety_emc_telecom",
+     "Zambia requires a PVoC Statement of Registration for EN 62368-1 safety and a ZICTA Type "
+     "Approval Certificate (covering Bluetooth/WLAN/RF under EN 300328-2, EN 301-489, and GSM "
+     "EN 301-511) for the wireless module.",
+     "either", "existing", "Now",
+     "Regulatory Requirements Summary.xlsx - EMEA ITE tab (Zambia rows)", "2026-10-07"),
+    ("Bluetooth Headset", "Algeria", "safety_emc_telecom",
+     "Algeria requires a CAP (Conformity Assessment Program) Statement of Registration / Product "
+     "Certificate for EN 62368-1 safety, and the wireless module is subject to a national "
+     "administrative procedure (with occasional testing) against EN 300328 / EN 301893 / "
+     "EN 301489 standards.",
+     "either", "existing", "Now",
+     "Regulatory Requirements Summary.xlsx - EMEA ITE tab (Algeria rows)", "2026-10-07"),
+    ("Bluetooth Headset", "Egypt", "safety_emc_telecom",
+     "Egypt's National Telecom Regulatory Authority (NTRA) advises an EU DoC plus RF and EMC "
+     "test reports for Bluetooth/WLAN modules (and a SAR report for any GSM/UMTS radio), "
+     "alongside EU DoC-based EN 62368-1 safety and EN 55032 EMC compliance.",
+     "online", "existing", "Now",
+     "Regulatory Requirements Summary.xlsx - EMEA ITE tab (Egypt rows)", "2026-10-07"),
+    ("Bluetooth Headset", "Tunisia", "safety_emc_telecom",
+     "Tunisia's CERT authority systematically tests wired and wireless (Bluetooth/WLAN) telecom "
+     "modules under a national administrative procedure, in addition to EU DoC-based EN 62368-1 "
+     "safety and EN 55032 EMC compliance.",
+     "either", "existing", "Now",
+     "Regulatory Requirements Summary.xlsx - EMEA ITE tab (Tunisia rows)", "2026-10-07"),
+    ("Bluetooth Headset", "Kuwait", "safety_emc_telecom",
+     "Kuwait requires registration under the Kuwait Conformity Assurance Scheme (KUCAS), "
+     "resulting in a 3-year Technical Evaluation Report, for IEC 62368-1 safety; CITRA accepts "
+     "EU test reports for the wireless module.",
+     "either", "existing", "Now",
+     "Regulatory Requirements Summary.xlsx - EMEA ITE tab (Kuwait rows)", "2026-10-07"),
+    ("Bluetooth Headset", "Gabon", "safety_emc_telecom",
+     "Gabon requires an AGANOR PVoC Statement of Registration for EN 62368-1 (and associated "
+     "EN 60204 machinery-safety) compliance; no wired/wireless telecom certification requirement "
+     "is currently on file for this category - a real gap in the source, not a \"not required\" "
+     "finding.",
+     "either", "existing", "Now",
+     "Regulatory Requirements Summary.xlsx - EMEA ITE tab (Gabon rows)", "2026-10-07"),
+    ("Bluetooth Headset", "Kenya", "safety_emc_telecom",
+     "Kenya requires a KEBS PVoC Statement of Registration for EN 60950 / EN 60204 / EN 62368-1 "
+     "safety compliance; no telecom-specific certification requirement is on file for this "
+     "category.",
+     "either", "existing", "Now",
+     "Regulatory Requirements Summary.xlsx - EMEA ITE tab (Kenya rows)", "2026-10-07"),
+    ("Bluetooth Headset", "Nigeria", "safety_emc_telecom",
+     "Nigeria requires a SON Product Certificate under the SONCAP (Standards Organization of "
+     "Nigeria Conformity Assessment Program) for EN 62368-1 safety compliance; no telecom-"
+     "specific certification requirement is on file for this category.",
+     "either", "existing", "Now",
+     "Regulatory Requirements Summary.xlsx - EMEA ITE tab (Nigeria rows)", "2026-10-07"),
+    ("Bluetooth Headset", "Tanzania", "safety_emc_telecom",
+     "Tanzania requires a TBS PVoC Statement of Registration for IEC/EN 60950, EN 60204, and "
+     "EN 62368-1 safety compliance; no telecom-specific certification requirement is on file for "
+     "this category.",
+     "either", "existing", "Now",
+     "Regulatory Requirements Summary.xlsx - EMEA ITE tab (Tanzania rows)", "2026-10-07"),
+    ("Bluetooth Headset", "Uganda", "safety_emc_telecom",
+     "Uganda requires a UNBS PVoC Statement of Registration for IEC/EN 60950, EN 60204, and "
+     "EN 62368-1 safety compliance; no telecom-specific certification requirement is on file for "
+     "this category.",
+     "either", "existing", "Now",
+     "Regulatory Requirements Summary.xlsx - EMEA ITE tab (Uganda rows)", "2026-10-07"),
 ]
 
 HEADER = ["category", "region", "domain", "requirement", "documentation_format",

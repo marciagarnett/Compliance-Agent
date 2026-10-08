@@ -1095,9 +1095,10 @@ def _generate_new_rows() -> list[list[str]]:
 
 def main() -> None:
     header, headset_rows = _load_existing_bluetooth_headset_rows()
-    assert len(headset_rows) == 48, (
-        f"Expected the original 48 Bluetooth Headset rows, found {len(headset_rows)} "
-        "- refusing to regenerate on top of an unexpected starting file."
+    assert len(headset_rows) == 73, (
+        f"Expected 73 Bluetooth Headset rows (48 original + 25 EMEA-expansion rows added "
+        f"2026-10-07), found {len(headset_rows)} - refusing to regenerate on top of an "
+        "unexpected starting file."
     )
 
     # Sanity check: every category this script classifies actually exists

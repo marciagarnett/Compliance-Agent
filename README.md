@@ -91,7 +91,50 @@ row happens to come first in `product_master.csv`, not necessarily the
 specific configuration meant. Searching by the specific Model Number/SKU
 avoids the ambiguity.
 
-**Regions and domains:** four regions (EU/UK, US, China, Taiwan), and seven
+**Regions and domains:** region coverage is data-driven - it comes from
+whatever regions actually have rows in `data/compliance_requirements.csv`
+(see `lookup._discover_valid_regions`), so it grows without a code change.
+It started as four regions (EU/UK, US, China, Taiwan) and, as of 2026-10-08,
+has a full first EMEA-expansion pass across all 95 categories that carry
+compliance data: 25 additional EMEA countries/territories (Algeria, Armenia,
+Bahrain, Egypt, Gabon, Israel, Jordan, Kazakhstan, Kenya, Kuwait,
+Kyrgyzstan, Morocco, Nigeria, Oman, Qatar, Saudi Arabia, Serbia, South
+Africa, Tanzania, Tunisia, Turkey, UAE, Uganda, Ukraine, Zambia), each
+authored from the actual reference workbook that domain already cites for
+the other four regions (`Regulatory Requirements Summary.xlsx` for
+`safety_emc_telecom`, `Machinery_ITE_Import_or_Importer_controls.xlsx` for
+`trade_customs`, `WW_Content_Requirements_FY25_FINAL.xlsx`'s EMEA & ISE tab
+for `warranty_documentation`, and `ER Roadmap_FY26Q3.pdf` for a couple of
+real emerging items). Coverage is honestly uneven because the sources
+themselves are uneven, not because of a shortcut taken here:
+- `safety_emc_telecom`: all 25 countries, across every category that has
+  this domain for EU/UK (66 of 95).
+- `trade_customs`: 23 of 25 countries (Bahrain and Gabon are absent from
+  the importer-controls workbook entirely), across all 95 categories.
+- `warranty_documentation`: 19 of 25 countries, across all 95 categories.
+  Kenya, Tanzania, Uganda, Zambia, Gabon, and Nigeria are a deliberate gap -
+  the source sheet only groups them under ambiguous regional buckets
+  ("Central Africa", "West Africa & Islands") with no member list, unlike
+  the "North Africa (Algeria, Morocco, Tunisia)" and "Southern Africa
+  (including South Africa)" rows it does name explicitly, and this app will
+  not guess at an unnamed grouping (Grounding Rule 3).
+- `environmental_sustainability`: only 2 real, specific emerging items
+  (South Africa, Saudi Arabia) turned up in the ER Roadmap for these 25
+  countries - everything else in this domain for the original four regions
+  is EU/US/China/Taiwan-bloc-specific regulation (EU RoHS/WEEE/Ecodesign,
+  etc.) that simply has no equivalent in the reference material for, say,
+  Israel or Nigeria.
+- `battery_safety`, `cybersecurity`, `hearing_aid_compatibility`: zero
+  rows for all 25 countries. The original four regions' content in these
+  three domains cites EU/US/Taiwan regulations directly (the EU Battery
+  Regulation, the EU Cyber Resilience Act, the European Accessibility Act,
+  etc.) - bloc-specific law with no analog found in any of the five
+  approved reference workbooks for these 25 countries. This is a real,
+  confirmed gap, not a "nothing required" finding - the next step for
+  closing it would be sourcing material HP doesn't currently have in
+  `reference/` for this project.
+
+There are now seven
 requirement domains: the original `environmental_sustainability` and
 `safety_emc_telecom`, plus three added alongside the catalog expansion -
 `hearing_aid_compatibility` (telecom-terminal accessibility rules for
@@ -116,14 +159,18 @@ distinction and lists every such citation.
   EIRP/power limits.
 - Any live scraping of government/regulatory websites — everything here is a
   static, hand-curated sample.
-- Fuzzy or semantic product matching, translation, or multi-language output —
-  identifier lookup is exact-match only (case-insensitive).
+- Translation or multi-language output — input and output are English
+  only. (Product-identifier matching itself is *not* exact-match-only: see
+  "How it works" below — it tolerates partial names, extra/out-of-order
+  words, and small typos.)
 - Any UI beyond this terminal application.
 
 ## How it works
 
 `lookup.py` is the deterministic core: it loads the two CSVs in `data/`,
-resolves a product identifier (name, SKU, or RMN — exact match) to a product
+resolves a product identifier (name, SKU, or RMN — exact match first, then
+partial-name, word-order-independent, and typo-tolerant fallbacks; see
+`find_product_verbose()`) to a product
 category, and joins that against the compliance requirements table for the
 requested region. It never guesses — if a product, region, or combination
 isn't in the sample data, it says so plainly instead of implying "no
@@ -243,11 +290,14 @@ duplicate the app's own data or capture anything beyond that.
 
 ## Known limitations to call out in a demo or writeup
 
-- This is a sample dataset covering every category in the sample catalog
-  across four regions — it is not a claim about HP's actual, complete
-  compliance obligations, and a handful of category/region/domain
-  combinations are deliberately left with zero rows where the reviewed
-  source material didn't support a confident claim (see "Scope" above).
+- This is a sample dataset — not a claim about HP's actual, complete
+  compliance obligations. Coverage is uneven by design and by honesty: the
+  original four regions (EU/UK, US, China, Taiwan) cover every sample
+  category across all seven domains; the EMEA-expansion countries added
+  2026-10-07 cover only Bluetooth Headset, only safety_emc_telecom, pending
+  the next pass. A handful of other category/region/domain combinations
+  are deliberately left with zero rows where the reviewed source material
+  didn't support a confident claim (see "Scope" above).
 - The free-text mode's *understanding* of a question depends on the Claude
   API; its *facts* never do — they always come from the same CSV the
   structured mode reads.

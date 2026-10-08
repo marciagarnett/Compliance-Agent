@@ -26,7 +26,32 @@ REGION_ALIASES = {
     "china": "China", "cn": "China", "prc": "China",
     "taiwan": "Taiwan", "tw": "Taiwan", "roc": "Taiwan",
 }
-VALID_REGIONS = ["EU/UK", "US", "China", "Taiwan"]
+def _discover_valid_regions(path: str = COMPLIANCE_PATH) -> list[str]:
+    """VALID_REGIONS is derived from whatever regions actually have rows in
+    data/compliance_requirements.csv, rather than a hardcoded list - so
+    adding a new region/country only ever requires adding cited data rows
+    (e.g. via build_data.py / build_compliance_requirements_v2.py), never a
+    code change here. The four original regions are pinned first (for
+    continuity with earlier docs/screenshots); everything else is appended
+    in the order first seen in the CSV. Falls back to the original four if
+    the data file can't be read yet (e.g. at import time in a fresh clone
+    before data/ has been generated)."""
+    pinned = ["EU/UK", "US", "China", "Taiwan"]
+    try:
+        with open(path, newline="", encoding="utf-8") as f:
+            seen = []
+            for row in csv.DictReader(f):
+                region = row.get("region", "")
+                if region and region not in seen:
+                    seen.append(region)
+    except OSError:
+        return pinned
+    ordered = [r for r in pinned if r in seen]
+    ordered += [r for r in seen if r not in pinned]
+    return ordered or pinned
+
+
+VALID_REGIONS = _discover_valid_regions()
 
 # Order requirement domains are grouped/printed in, with a human-readable label.
 DOMAIN_ORDER = [
@@ -477,11 +502,39 @@ def _build_summary_lines(result: LookupResult, flat: list) -> list[str]:
             "text is tracked at all."
         )
     else:
-        lines.append(
-            "Coverage: " + ", ".join(label for _, label in DOMAIN_ORDER) + " only - no "
-            "cybersecurity-specific, radio-engineering detail, or full warranty legal "
-            "text is tracked here."
+        # Which of the 7 tracked domains actually have a requirement on
+        # file for THIS product/region, vs. which are a real gap - computed
+        # from the same `flat` list the table above is built from, so this
+        # line can never claim coverage the itemized report doesn't back up
+        # (the previous version of this line unconditionally named all 7
+        # domains regardless of whether any had data, which is exactly the
+        # kind of gap this app is supposed to call out per Grounding Rule 3,
+        # not paper over).
+        domains_with_data = []
+        seen = set()
+        for _, _r, domain_key in flat:
+            if domain_key not in seen:
+                seen.add(domain_key)
+                domains_with_data.append(domain_key)
+        domains_without_data = [key for key, _ in DOMAIN_ORDER if key not in seen]
+
+        with_labels = ", ".join(domain_label_by_key[key] for key in domains_with_data)
+        coverage_line = (
+            f"Coverage: requirements on file in {with_labels} "
+            f"({len(domains_with_data)} of {len(DOMAIN_ORDER)} domains this app tracks)."
         )
+        if domains_without_data:
+            without_labels = ", ".join(domain_label_by_key[key] for key in domains_without_data)
+            coverage_line += (
+                f" No requirements are on file for {without_labels} for this "
+                "category/region combination - that is a coverage gap in this sample "
+                "dataset, not a statement that nothing applies (Grounding Rule 3)."
+            )
+        coverage_line += (
+            " Even within a domain listed as covered, no cybersecurity-specific, "
+            "radio-engineering detail, or full warranty legal text is tracked here."
+        )
+        lines.append(coverage_line)
     lines.append("")
     lines.append("See the table and full itemized report below for exact requirement text and citations.")
     return lines
