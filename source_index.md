@@ -154,16 +154,22 @@ applies to how this dataset gets built, not only to how it gets queried).
 
 ---
 
-## Methodology source (informs the data model, not cited per row)
+## Source 6 — methodology, and now also a directly-cited source (Americas)
 
 ### Source 6
 
 **Name:** WTR Regulatory Manual.xlsx
-**Purpose:** Defines documentation-*format* rules — whether a requirement is
-for certification purposes, must be part of a regulatory submittal package,
-requires localization, and whether it may be delivered as printed hardcopy,
-on a device's integrated display/control panel, via QR code, on the web, or
-on an HDD.
+**Purpose:** Originally used only to define documentation-*format* rules —
+whether a requirement is for certification purposes, must be part of a
+regulatory submittal package, requires localization, and whether it may be
+delivered as printed hardcopy, on a device's integrated display/control
+panel, via QR code, on the web, or on an HDD. **Updated 2026-10-08:** its
+`AMS` tab (Argentina, Brazil, Canada, Chile, Colombia, Mexico, Paraguay,
+Peru, USA — real per-country `safety_emc_telecom` requirement text in a
+`requirement` column, not just format metadata) is now also a direct,
+per-row content source — it's the `citation_source` cited by all 8 new
+Americas `safety_emc_telecom` rows added that date, and by Mexico's
+`warranty_documentation` row (its Consumer Protection discipline line).
 **Date/Version:** "last regular update: 1/5/2024" per its own Manual Guide
 tab; its Energy Efficiency tab is dated separately.
 **Source:** Internal HP WTR program manual, maintained by a named document
@@ -171,9 +177,21 @@ editor.
 **Why the agent may trust it:** this file is *why* the dataset has a
 `documentation_format` (print / online / either) field at all, and why
 `either` is reserved specifically for cases where a QR code or web link is
-allowed in place of print — that rule came directly from this manual. No
-single dataset row cites it individually because it shaped the schema
-itself, not any one country's answer.
+allowed in place of print — that rule came directly from this manual. Most
+rows still don't cite it individually because it shaped the schema itself,
+not any one country's answer — the Americas `safety_emc_telecom`/Mexico
+`warranty_documentation` rows above are the exception, where its `AMS` tab
+is the actual, direct source of the requirement text, same standard as
+Sources 1–3.
+
+**Not yet mined from this same `AMS` tab:** nothing — all 8 AMS-tab
+countries and the one Mexico Consumer Protection row are now in the
+dataset. Its `EMEA` tab (Algeria/Bahrain/Egypt/Iraq/Jordan/Kuwait/Lebanon/
+Libya/Mauritania/Morocco/Oman/Qatar/Tunisia/UAE/Yemen bucketed together,
+plus France, Israel, Kazakhstan, Saudi Arabia, Serbia, South Africa,
+Turkey, Ukraine, UK) has not been cross-checked against the EMEA
+`safety_emc_telecom` rows (sourced from Source 1 instead) for gaps or
+conflicts — a reasonable next audit step, not yet done.
 
 ---
 

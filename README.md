@@ -134,6 +134,99 @@ themselves are uneven, not because of a shortcut taken here:
   closing it would be sourcing material HP doesn't currently have in
   `reference/` for this project.
 
+**Americas expansion (added 2026-10-08):** 8 further Americas countries
+(Argentina, Brazil, Canada, Chile, Colombia, Mexico, Paraguay, Peru) were
+added with `safety_emc_telecom` coverage across the same 95 categories,
+authored from `WTR Regulatory Manual.xlsx`'s AMS tab. `warranty_documentation`
+is added for Mexico only, from the same `WTR Regulatory Manual.xlsx` AMS tab
+(its Consumer Protection discipline row), not from
+`WW_Content_Requirements_FY25_FINAL.xlsx` as an earlier draft of this
+section said. `trade_customs` is added for
+Mexico, Paraguay, and Peru only (not the other five), from
+`Machinery_ITE_Import_or_Importer_controls.xlsx`'s Importer Invoice
+countries ITE tab, which only had usable Y/N/D customs-check data for those
+three of the eight. None of the eight have `hearing_aid_compatibility`,
+`cybersecurity`, `battery_safety`, or `environmental_sustainability` rows -
+same reason as the EMEA gap above: no analog found yet in the five approved
+workbooks.
+
+**APJ expansion (added 2026-10-08):** 10 APJ countries (Cambodia, India,
+Indonesia, Malaysia, Pakistan, Philippines, South Korea, Sri Lanka,
+Thailand, Vietnam) were added with `trade_customs` coverage only, from the
+same Importer-controls workbook's APJ rows. This is a narrower start than
+the Americas pass: no `safety_emc_telecom`, `warranty_documentation`,
+`hearing_aid_compatibility`, `cybersecurity`, or `battery_safety` source was
+found for any of the 10 in the five approved workbooks, so those domains
+are a stated gap here, not a guess.
+
+**EMEA gap-fill (added 2026-10-08):** Ghana and Rwanda were missing from the
+25-country EMEA pass above. Both are now added with `trade_customs`
+coverage (same Importer-controls workbook, same 95 categories), matching
+the "Safety=Y checked" treatment used for Saudi Arabia and South Africa. No
+`safety_emc_telecom` or `warranty_documentation` source was found for
+either in the approved workbooks, so - as with the rest of the EMEA pass -
+that's disclosed, not filled in.
+
+As of 2026-10-08 (first pass), region coverage totaled 49 regions: the
+original four (EU/UK, US, China, Taiwan), the 25 EMEA-expansion countries
+plus the Ghana/Rwanda gap-fill, the 8 Americas countries, and the 10 APJ
+countries.
+
+**Gap-audit follow-up pass (added 2026-10-08):** a self-audit against the
+same five approved workbooks turned up real, named, dated content that the
+first Americas/APJ pass above missed or under-scoped. All of the following
+is sourced the same way as everything above - nothing guessed:
+
+- **Argentina and Chile `trade_customs`:** the first pass skipped both;
+  re-checking `Machinery_ITE_Import_or_Importer_controls.xlsx` found a real
+  importer-name-approval requirement for each (Argentina: Safety;
+  Chile: Safety and Energy) that should have been included, the same way
+  Ghana/Rwanda/Mexico were.
+- **`safety_emc_telecom` for 8 of the 10 APJ countries** (Cambodia, India,
+  Indonesia, South Korea, Malaysia, Philippines, Thailand, Vietnam): the
+  first pass said no source existed. `Regulatory Requirements Summary.xlsx`
+  has a dedicated APJ ITE tab with real safety/EMC/telecom rows for all
+  eight (Pakistan and Sri Lanka genuinely aren't in that tab, so they still
+  only have `trade_customs`).
+- **`warranty_documentation` for the Americas and APJ:**
+  `WW_Content_Requirements_FY25_FINAL.xlsx` has dedicated "AMS & LA" and
+  "APJ" sheets, never opened in the first pass, with real print/electronic
+  warranty data for Argentina, Brazil, Chile, Colombia, Paraguay, Peru,
+  Canada, and all 10 APJ countries. (Mexico's warranty row, added in the
+  first pass, is unaffected by this - it's correctly sourced from
+  `WTR Regulatory Manual.xlsx`'s AMS tab, not this file, as corrected
+  below.)
+- **8 new regions:** the same two workbooks' AMS ITE and APJ ITE tabs cover
+  Ecuador, Panama, and Venezuela (Americas) and Australia, Hong Kong,
+  Japan, New Zealand, and Singapore (APJ) with real `safety_emc_telecom`
+  data that was never extracted. Panama and Venezuela only have
+  wired/wireless-telecom data (no general safety/EMC source), which is
+  stated in their rows rather than guessed around.
+- **Emerging regulations:** `ER Roadmap_FY26Q3.pdf` names specific, dated
+  emerging items for India, Indonesia, South Korea, Malaysia, New Zealand,
+  the Philippines, Thailand, and Vietnam (APJ), and Argentina, Canada,
+  Chile, and Mexico (Americas) across `safety_emc_telecom`,
+  `battery_safety`, and `environmental_sustainability` - the same kind of
+  item already in the dataset for South Africa and Saudi Arabia. Two items
+  whose effective date had already passed by 2026-10-08 (Argentina's
+  ENACOM change, South Korea's LTE/5G channel-bandwidth expansion) were
+  entered as `existing` rather than `emerging`, since the date has come
+  and gone.
+- **One citation correction:** Mexico's `warranty_documentation` row was
+  mis-attributed above to `WW_Content_Requirements_FY25_FINAL.xlsx`; its
+  real source is `WTR Regulatory Manual.xlsx`'s AMS tab (Consumer
+  Protection discipline). Fixed in both the dataset's citation and this
+  file; see `source_index.md`'s Source 6 entry for the full correction.
+
+As of 2026-10-08 (after the follow-up pass), region coverage totals 57
+regions, and per-domain coverage is uneven on purpose - some of the new
+regions above only have one or two domains (e.g. Ghana/Rwanda/Pakistan/Sri
+Lanka: `trade_customs` only; Panama/Venezuela: telecom only within
+`safety_emc_telecom`) because that's genuinely all the approved reference
+material supports for them. `hearing_aid_compatibility` and `cybersecurity`
+remain EU/UK/US/Taiwan/China-only across every region added this session -
+no source for either has turned up yet outside the original four regions.
+
 There are now seven
 requirement domains: the original `environmental_sustainability` and
 `safety_emc_telecom`, plus three added alongside the catalog expansion -
@@ -293,11 +386,19 @@ duplicate the app's own data or capture anything beyond that.
 - This is a sample dataset — not a claim about HP's actual, complete
   compliance obligations. Coverage is uneven by design and by honesty: the
   original four regions (EU/UK, US, China, Taiwan) cover every sample
-  category across all seven domains; the EMEA-expansion countries added
-  2026-10-07 cover only Bluetooth Headset, only safety_emc_telecom, pending
-  the next pass. A handful of other category/region/domain combinations
-  are deliberately left with zero rows where the reviewed source material
-  didn't support a confident claim (see "Scope" above).
+  category across all seven domains. The 27 EMEA-expansion countries
+  (25 plus the Ghana/Rwanda gap-fill) cover all 95 categories for
+  `safety_emc_telecom` and `trade_customs` where a source existed, but not
+  every domain. The Americas (10 countries: the original 8 plus Ecuador
+  and Venezuela/Panama's narrower telecom-only rows) and APJ (15 countries:
+  the original 10 plus Australia, Hong Kong, Japan, New Zealand, Singapore)
+  are narrower still and uneven country-to-country within themselves — see
+  "Regions and domains" above for the exact per-country/per-domain
+  breakdown. `hearing_aid_compatibility` and `cybersecurity` remain
+  EU/UK/US/Taiwan/China-only across all 57 regions — no source for either
+  has turned up yet anywhere else. A handful of other category/region/domain
+  combinations are deliberately left with zero rows where the reviewed
+  source material didn't support a confident claim (see "Scope" above).
 - The free-text mode's *understanding* of a question depends on the Claude
   API; its *facts* never do — they always come from the same CSV the
   structured mode reads.

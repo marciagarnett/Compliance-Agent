@@ -42,10 +42,22 @@ across 49 categories). `compliance_requirements.csv` is the actual knowledge
 base, keyed by category + region + domain, tracking seven requirement
 domains (environmental/sustainability, safety/EMC/telecom, hearing aid
 compatibility, cybersecurity, battery safety, trade/customs, warranty
-documentation) for EU/UK, US, China, Taiwan, plus an EMEA expansion covering
-25 additional countries wherever the underlying reference material actually
-supports it. Gaps are deliberate and disclosed, never silently guessed —
-per Grounding Rule 3.
+documentation) for 57 regions total: the original EU/UK, US, China, Taiwan;
+a 27-country EMEA expansion (25 countries plus a Ghana/Rwanda gap-fill); 10
+Americas countries (Argentina, Brazil, Canada, Chile, Colombia, Mexico,
+Paraguay, Peru, Ecuador, Venezuela, Panama — the last two telecom-only);
+and 15 APJ countries (Cambodia, India, Indonesia, South Korea, Malaysia,
+Pakistan, Philippines, Sri Lanka, Thailand, Vietnam, Australia, Hong Kong,
+Japan, New Zealand, Singapore) — each only in whichever domains the
+underlying reference material actually supports. Coverage is uneven on
+purpose and was expanded in two passes: a first pass, then a self-audit
+against the same five approved workbooks that found real sourced content
+the first pass had missed or under-scoped (safety_emc_telecom for 8 APJ
+countries that pass said had no source; trade_customs for Argentina/Chile;
+warranty for most of the Americas/APJ; 8 new regions; and several named
+emerging regulations). `hearing_aid_compatibility` and `cybersecurity`
+remain EU/UK/US/Taiwan/China-only everywhere. Gaps are deliberate and
+disclosed, never silently guessed — per Grounding Rule 3.
 
 ## The end-to-end simulated business workflow
 
@@ -83,15 +95,18 @@ becomes official documentation.
 Three scripted test scenarios (a normal lookup, an ambiguous/unsupported
 input, and a corrupted upstream feed) plus a recorded usability test with a
 real end user, whose feedback (confusion over the results table's status
-vocabulary, a strong preference for the natural-language mode, and a gap in
-partial-product-name matching) is tracked as open follow-up work rather than
-folded in silently.
+vocabulary and a strong preference for the natural-language mode) is
+tracked as open follow-up work rather than folded in silently.
 
 ## Known limitations
 
-No fuzzy/partial product-name matching (exact string match only); the
-results table's status terms (Act on now / Existing / Monitor / Emerging)
-have no on-screen legend yet; three of seven domains (battery safety,
-cybersecurity, hearing aid compatibility) have no EMEA-region data because
-no reference source currently covers them for those countries — disclosed
-in the app's output, not hidden.
+No translation/multi-language support (input and output are English
+only) — product-identifier matching itself already tolerates partial
+names, extra/out-of-order words, and small typos (`lookup.find_product_verbose`),
+that part is not a gap. The results table's status terms (Act on now /
+Existing / Monitor / Emerging) have no on-screen legend yet. Coverage
+outside the original four regions is real but uneven: EMEA/Americas lack
+battery safety, cybersecurity, and hearing-aid-compatibility data, and APJ
+currently has trade/customs coverage only — because no reference source
+yet covers those domains for those countries, not because of a shortcut —
+disclosed in the app's output, not hidden.
