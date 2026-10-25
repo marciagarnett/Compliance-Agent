@@ -255,6 +255,16 @@ def ask():
     )
     phrase_call_failed = phrased is None  # captured before phrased is overwritten below
     if phrased and not verified_ok:
+        # TEMPORARY diagnostic only - captures the raw, pre-fallback model
+        # text on a verification failure so it can be inspected after the
+        # fact (it is otherwise discarded, never logged). Remove once the
+        # live clarification-case failure is diagnosed.
+        try:
+            with open("debug_last_phrased.txt", "w", encoding="utf-8") as _dbg:
+                _dbg.write(phrased)
+        except Exception:
+            pass
+    if phrased and not verified_ok:
         phrased = (
             "[The phrased summary didn't pass this app's check against the "
             "verified data (missing a citation, or missing the required "
