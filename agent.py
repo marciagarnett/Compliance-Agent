@@ -227,7 +227,13 @@ def natural_language_lookup(client, model, products, requirements, user_text: st
     # to reproduce the table itself.
     verified_report = lookup.format_result(result)
 
-    phrased = llm_agent.phrase_answer(client, model, user_text, verified_report, result.ok)
+    # Only meaningful when result.ok is False (ignored by phrase_answer()'s
+    # prompt and verify_phrased_answer()'s check otherwise), but computed
+    # unconditionally since it's cheap and both call sites need it below.
+    not_ok_header = lookup.not_ok_header(result)
+    phrased = llm_agent.phrase_answer(
+        client, model, user_text, verified_report, result.ok, not_ok_header
+    )
     # The At a Glance table was already printed above for a successful
     # lookup, so only the rest of the report prints here - otherwise the
     # same table would appear twice in one response. For a failed lookup,
@@ -239,7 +245,7 @@ def natural_language_lookup(client, model, products, requirements, user_text: st
     # never shown, regardless of how confident or well-formed it reads.
     verified_ok = llm_agent.verify_phrased_answer(
         phrased, lookup.shown_citations(result), result.ok,
-        lookup.shown_row_markers(result),
+        lookup.shown_row_markers(result), not_ok_header,
     )
     # One log entry per turn, fired here (after the full pipeline, not
     # right after run_lookup()) so it can reflect what the user actually

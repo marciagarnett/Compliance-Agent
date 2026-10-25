@@ -709,6 +709,28 @@ def _not_ok_header(result: LookupResult) -> str:
     return "Human review required."
 
 
+def not_ok_header(result: LookupResult) -> str:
+    """
+    Public accessor for _not_ok_header() - the exact header string
+    (byte-for-byte) that format_result()/format_result_details() render
+    into a failed lookup's text, and therefore the exact header text the
+    model actually sees in VERIFIED_DATA for that result.
+
+    This exists for the same reason shown_citations()/shown_row_markers()
+    do: llm_agent.phrase_answer()/verify_phrased_answer() need the real
+    header text to tell the model what to open with and to check what it
+    actually wrote, rather than re-deriving "which header applies" from
+    reason_code a second time in a different file - that duplication is
+    exactly what let phrase_answer()'s prompt drift out of sync and
+    hardcode "Human review required." for every not-ok result, including
+    an ambiguous-product (clarification) result whose own VERIFIED_DATA
+    text said "Clarification needed." instead - a real, observed mismatch
+    (see llm_agent.py) that caused a legitimate clarification answer to
+    fail verification and fall back to the raw report.
+    """
+    return _not_ok_header(result)
+
+
 def at_a_glance(result: LookupResult) -> str:
     """
     Just the header line + the "At a glance" table, standing on its own.

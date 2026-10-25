@@ -187,7 +187,13 @@ def ask():
     # helpful, and it's also the only part that isn't LLM-generated.
     full_report = lookup.format_result(result)
     verified_report = lookup.format_result_verified(result)
-    phrased = llm_agent.phrase_answer(LLM_CLIENT, LLM_MODEL, user_text, full_report, result.ok)
+    # Only meaningful when result.ok is False (ignored by phrase_answer()'s
+    # prompt and verify_phrased_answer()'s check otherwise), but computed
+    # unconditionally since it's cheap and both call sites need it below.
+    not_ok_header = lookup.not_ok_header(result)
+    phrased = llm_agent.phrase_answer(
+        LLM_CLIENT, LLM_MODEL, user_text, full_report, result.ok, not_ok_header
+    )
 
     heads_up = [hit["note"] for hit in extracted.get("out_of_scope_topics", out_of_scope)]
     # Same deterministic, application-level check agent.py's CLI path uses -
@@ -195,7 +201,7 @@ def ask():
     # sentinel is never shown, no matter how well-formed it reads.
     verified_ok = llm_agent.verify_phrased_answer(
         phrased, lookup.shown_citations(result), result.ok,
-        lookup.shown_row_markers(result),
+        lookup.shown_row_markers(result), not_ok_header,
     )
     phrase_call_failed = phrased is None  # captured before phrased is overwritten below
     if phrased and not verified_ok:

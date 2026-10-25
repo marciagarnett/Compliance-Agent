@@ -270,12 +270,28 @@ def extract_query(client, model: str, user_text: str) -> tuple[Optional[dict], s
         return None, "sdk_call_failed"
 
 
-def phrase_answer(client, model: str, user_text: str, verified_report: str, found: bool) -> Optional[str]:
+def phrase_answer(
+    client, model: str, user_text: str, verified_report: str, found: bool,
+    not_ok_header: str = "Human review required.",
+) -> Optional[str]:
     """
     Turn the deterministic, already-verified report into friendlier prose.
     The model is explicitly told not to add or change any factual content -
     every requirement, tag, date, and citation in `verified_report` must
     still appear, unchanged, somewhere in the output.
+
+    not_ok_header - the exact header VERIFIED_DATA already opens with when
+    found is False (pass lookup.not_ok_header(result)): "Clarification
+    needed." for an ambiguous product match, "Human review required." for
+    every other coverage gap (see lookup._not_ok_header()). This used to be
+    hardcoded to "Human review required." for every not-found case,
+    including clarification - which told the model to write an opening
+    line that contradicted what VERIFIED_DATA itself said, a real mismatch
+    that made verify_phrased_answer() reject an otherwise-correct
+    clarification answer (observed in a live run; see verify_phrased_answer()).
+    Defaults to "Human review required." so any caller not yet updated to
+    pass this keeps the old behavior unchanged.
+
     Returns None if the call fails; agent.py just prints verified_report alone then.
     """
     system = (
@@ -292,16 +308,24 @@ def phrase_answer(client, model: str, user_text: str, verified_report: str, foun
         "3. If VERIFIED_DATA reports 'not found' or a coverage gap, say so "
         "plainly - never imply the product is compliant, that nothing is "
         "required, or that a gap means it's safe to proceed.\n"
-        "4. When found is False, your answer MUST open with the exact line "
-        "'Human review required.' on its own, then a blank line, then a plain "
+        f"4. When found is False, your answer MUST open with the exact line "
+        f"{not_ok_header!r} on its own, then a blank line, then a plain "
         "explanation of why - drawn only from VERIFIED_DATA's message, never "
-        "invented or reworded away from what it actually says. Preserve every "
-        "escalate-to-a-regulatory-SME notice in VERIFIED_DATA exactly as "
-        "written. This prototype does not attempt to resolve conflicting "
-        "source data automatically - if VERIFIED_DATA ever contains "
-        "requirements that read as contradictory, open with that same 'Human "
-        "review required.' line and flag the conflict explicitly as a "
-        "human-review case rather than picking one.\n"
+        "invented or reworded away from what it actually says. VERIFIED_DATA "
+        "itself opens with this same line - match it exactly, do not "
+        "substitute a different phrase even if it reads more naturally to "
+        "you. If this line reads 'Clarification needed.', your job is to ask "
+        "the user, in your own words, to pick one of the candidate products "
+        "VERIFIED_DATA lists - do not call this a 'human review' situation, "
+        "do not suggest escalating to anyone, and do not imply anything is "
+        "wrong; it is a routine request for one more detail. If this line "
+        "reads 'Human review required.', preserve every escalate-to-a-"
+        "regulatory-SME notice in VERIFIED_DATA exactly as written. This "
+        "prototype does not attempt to resolve conflicting source data "
+        "automatically - if VERIFIED_DATA ever contains requirements that "
+        "read as contradictory, open with 'Human review required.' and flag "
+        "the conflict explicitly as a human-review case rather than picking "
+        "one.\n"
         "5. Every citation ('Source: ...') in VERIFIED_DATA must still appear "
         "in your answer, attached to the requirement it supports.\n\n"
         "Formatting: the At a Glance table in VERIFIED_DATA (row numbers, "
@@ -354,6 +378,7 @@ def verify_phrased_answer(
     citations: list[str],
     found: bool,
     row_markers: Optional[list[str]] = None,
+    not_ok_header: str = "Human review required.",
 ) -> bool:
     """
     Deterministic (no model call) check of phrase_answer()'s own output
@@ -367,9 +392,18 @@ def verify_phrased_answer(
     Checks, in order:
       1. `phrased` must be non-empty.
       2. If `found` is False, `phrased` must open with the exact sentinel
-         line "Human review required." - the one requirement
-         phrase_answer()'s system prompt places on a not-found/coverage-gap
-         result (Grounding Rule 4).
+         line given by `not_ok_header` (pass lookup.not_ok_header(result) -
+         "Clarification needed." for an ambiguous product match, "Human
+         review required." for every other coverage gap). This used to be
+         hardcoded to "Human review required." for every not-found case.
+         That was a real bug, not just an unlikely edge case: a live run
+         asking about an ambiguous product got a correct, well-formed
+         clarification answer from the model, but this check rejected it
+         because it opened with something other than the literal string
+         "Human review required." - which a clarification case has no
+         reason to say and phrase_answer()'s own prompt no longer tells it
+         to. `not_ok_header` defaults to "Human review required." so a
+         caller not yet updated to pass it keeps the old behavior.
       3. Every string in `citations` (pass lookup.shown_citations(result))
          must appear verbatim somewhere in `phrased` - nothing the report
          cited may be dropped when the model rephrases it (Grounding
@@ -396,7 +430,7 @@ def verify_phrased_answer(
     """
     if not phrased:
         return False
-    if not found and not phrased.startswith("Human review required."):
+    if not found and not phrased.startswith(not_ok_header):
         return False
     if not all(citation in phrased for citation in citations if citation):
         return False
