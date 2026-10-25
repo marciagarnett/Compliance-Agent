@@ -160,15 +160,65 @@ def ask():
     requested_domains = extracted.get("requested_domains", [])
 
     if not identifier or not region:
-        activity_log.log_event(
-            activity_log.FAILED, mode="ask", identifier=identifier, region=region,
-            reason="missing_identifier_or_region",
+        # The CLI (agent.py) handles this by pausing and asking input()
+        # directly - a single HTTP request can't do that. Give the asker
+        # something concrete to resubmit with instead of a bare "couldn't
+        # identify" dead end: resolve whatever identifier text WAS given
+        # (even without a region - find_product_verbose() doesn't need
+        # one) so a genuinely ambiguous product name still surfaces its
+        # candidate list here, exactly as it would further down the
+        # pipeline, and always list the supported regions when region is
+        # the gap, since that list is fixed and free to offer.
+        lines = []
+        reason = "missing_identifier_or_region"
+        product_candidates: list[str] = []
+        if identifier:
+            product, match_note, product_candidates = lookup.find_product_verbose(identifier, PRODUCTS)
+            if product is not None:
+                if match_note:
+                    # A fallback (partial-name/word/fuzzy) match - say what
+                    # was typed and what it resolved to, since they differ.
+                    lines.append(f"I matched '{identifier}' to '{product.product_name}'. {match_note}")
+                else:
+                    # An exact match on name, SKU, or RMN - identifier and
+                    # product.product_name may be byte-identical, so
+                    # "matched X to X" would read strangely; just confirm it.
+                    lines.append(f"I found an exact match for '{product.product_name}'.")
+            elif product_candidates:
+                reason = "ambiguous_product"
+                lines.append(
+                    f"'{identifier}' matches more than one sample product - did you "
+                    "mean one of these?"
+                )
+                lines.extend(f"  - {c}" for c in product_candidates)
+            else:
+                lines.append(
+                    f"I couldn't find a product matching '{identifier}' in the sample "
+                    "dataset (checked name, SKU, and RMN)."
+                )
+        else:
+            lines.append("I couldn't identify a product in that question.")
+
+        if not region:
+            lines.append(
+                f"\nA destination region is also needed - supported regions: "
+                f"{', '.join(lookup.VALID_REGIONS)}."
+            )
+
+        lines.append(
+            "\nPlease ask again naming one exact product (name, SKU, or RMN from "
+            "the list above if one was shown) and one of the supported regions."
         )
-        report = (
-            f"[Could not confidently identify both a product and a region in that "
-            f"question (got identifier={identifier!r}, region={region!r}). Try "
-            "rephrasing your question to name both a specific product (name, SKU, "
-            "or RMN) and a destination region explicitly.]"
+        report = "[" + "\n".join(lines) + "]"
+
+        # Every path above ends in something concrete the asker can act on
+        # (an exact match confirmed, a candidate list, or the fixed list of
+        # supported regions) - that is a clarification question, not a
+        # dead end, so it gets the same CLARIFICATION bucket an ambiguous
+        # run_lookup() result does rather than FAILED (see activity_log.py).
+        activity_log.log_event(
+            activity_log.CLARIFICATION, mode="ask", identifier=identifier, region=region,
+            reason=reason,
         )
         return render_template(
             "index.html", llm_available=LLM_AVAILABLE,
