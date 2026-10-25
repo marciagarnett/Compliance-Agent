@@ -74,13 +74,62 @@ def list_sample_products(products: list[lookup.Product]) -> None:
     print()
 
 
+def _outcome_for(result: lookup.LookupResult) -> str:
+    """
+    Map a LookupResult to one of activity_log's four outcomes. An ambiguous
+    product match (reason_code == "ambiguous_product") is a clarification
+    situation - the asker needs to pick from a short list the system
+    already showed them - not a case that needs a regulatory SME's
+    judgment, so it gets its own CLARIFICATION bucket instead of being
+    folded into HUMAN_REVIEW (see activity_log.py's module docstring).
+    """
+    if result.ok:
+        return activity_log.COMPLETED
+    if result.reason_code == "ambiguous_product":
+        return activity_log.CLARIFICATION
+    return activity_log.HUMAN_REVIEW
+
+
+def _prompt_for_candidate(result: lookup.LookupResult, region, products, requirements,
+                           requested_domains=None) -> lookup.LookupResult:
+    """
+    When run_lookup() couldn't resolve a single product but found
+    plausible candidates (reason_code == "ambiguous_product"), ask once
+    which one was meant and re-run the lookup with that exact name. This
+    is a clarification question, not an escalation: the system already has
+    enough information to ask a targeted follow-up, and resolving it needs
+    the asker's answer, not a human reviewer's judgment.
+
+    Returns the original result unchanged if there's nothing to clarify,
+    or if the asker doesn't pick a valid option (blank input, or a number
+    out of range) - one follow-up only, no retry loop, the same discipline
+    the existing identifier/region follow-up above already uses.
+    """
+    if result.reason_code != "ambiguous_product" or not result.candidates:
+        return result
+    print("\nDid you mean one of these?")
+    for i, name in enumerate(result.candidates, start=1):
+        print(f"  {i}) {name}")
+    choice = input("Enter a number, or press Enter to skip: ").strip()
+    if not choice.isdigit():
+        return result
+    idx = int(choice)
+    if not (1 <= idx <= len(result.candidates)):
+        return result
+    chosen = result.candidates[idx - 1]
+    print(f"\n[Using '{chosen}' - re-running the lookup.]")
+    return lookup.run_lookup(chosen, region, products, requirements,
+                              requested_domains=requested_domains)
+
+
 def structured_lookup(products, requirements, identifier: str | None = None) -> None:
     if identifier is None:
         identifier = input("Product identifier (name, SKU, or RMN): ").strip()
     region = input("Destination region (EU/UK, US, China, or Taiwan): ").strip()
     result = lookup.run_lookup(identifier, region, products, requirements)
+    result = _prompt_for_candidate(result, region, products, requirements)
     activity_log.log_event(
-        activity_log.COMPLETED if result.ok else activity_log.HUMAN_REVIEW,
+        _outcome_for(result),
         mode="structured",
         identifier=identifier,
         region=region,
@@ -123,9 +172,9 @@ def natural_language_lookup(client, model, products, requirements, user_text: st
     if not user_text:
         return
 
-    extracted = llm_agent.extract_query(client, model, user_text)
+    extracted, extract_fail_reason = llm_agent.extract_query(client, model, user_text)
     if extracted is None:
-        activity_log.log_event(activity_log.FAILED, mode="ask", reason="llm_extract_failed")
+        activity_log.log_event(activity_log.FAILED, mode="ask", reason=extract_fail_reason)
         _print_out_of_scope_notice(llm_agent.detect_out_of_scope_topics(user_text))
         print(
             "\n[Couldn't reach the Claude API to interpret that question, or the "
@@ -166,13 +215,7 @@ def natural_language_lookup(client, model, products, requirements, user_text: st
 
     result = lookup.run_lookup(identifier, region, products, requirements,
                                 requested_domains=requested_domains)
-    activity_log.log_event(
-        activity_log.COMPLETED if result.ok else activity_log.HUMAN_REVIEW,
-        mode="ask",
-        identifier=identifier,
-        region=region,
-        reason=result.reason_code,
-    )
+    result = _prompt_for_candidate(result, region, products, requirements, requested_domains)
     if result.ok:
         # Print the At a Glance table directly, verbatim, before the LLM
         # gets involved at all - its position is then guaranteed by code,
@@ -190,9 +233,47 @@ def natural_language_lookup(client, model, products, requirements, user_text: st
     # same table would appear twice in one response. For a failed lookup,
     # at_a_glance() was never printed, so details == verified_report.
     details = lookup.format_result_details(result)
-    if phrased:
+    # Deterministic, application-level check of the model's own output
+    # against the real citations and the required human-review sentinel -
+    # never a model self-assessment. A phrased answer that fails this is
+    # never shown, regardless of how confident or well-formed it reads.
+    verified_ok = llm_agent.verify_phrased_answer(
+        phrased, lookup.shown_citations(result), result.ok,
+        lookup.shown_row_markers(result),
+    )
+    # One log entry per turn, fired here (after the full pipeline, not
+    # right after run_lookup()) so it can reflect what the user actually
+    # saw. A coverage gap (ok=False) still logs with its existing
+    # reason_code; a found result logs COMPLETED either way, but with a
+    # distinct reason when the friendly phrasing itself didn't make it to
+    # the user - a phrasing/verification problem is not a compliance-data
+    # problem, so it doesn't change the outcome bucket, only the reason.
+    if not result.ok:
+        phrase_reason = result.reason_code
+    elif phrased is None:
+        phrase_reason = "llm_phrase_failed"
+    elif not verified_ok:
+        phrase_reason = "verification_failed"
+    else:
+        phrase_reason = ""
+    activity_log.log_event(
+        _outcome_for(result),
+        mode="ask",
+        identifier=identifier,
+        region=region,
+        reason=phrase_reason,
+    )
+    if verified_ok:
         print("\n" + phrased)
         print("\n--- Verified source data (unedited) ---")
+        print(details)
+    elif phrased:
+        print(
+            "\n[The phrased summary didn't pass this app's check against the "
+            "verified data (missing a citation, or missing the required "
+            "human-review notice) - showing the verified lookup result "
+            "directly.]"
+        )
         print(details)
     else:
         print(

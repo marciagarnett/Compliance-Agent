@@ -84,6 +84,12 @@ class Requirement:
     must_comply_by: str
     citation_source: str
     last_verified: str
+    # Which compliance team's source feed this row came from. Optional and
+    # defaulted so this stays compatible with any compliance_requirements.csv
+    # written before this column existed. Added so scripts/sync_from_source_systems.py
+    # can hold back one team's rows untouched if that team's feed fails to
+    # read, without blocking every other team's sync that same run.
+    owning_team: str = ""
 
 
 @dataclass
@@ -108,6 +114,12 @@ class LookupResult:
     # report so a partial or slightly-misspelled identifier never silently
     # turns into a different product name without saying so.
     match_note: str = ""
+    # Populated only when reason_code == "ambiguous_product": the short
+    # list of plausible product names find_product_verbose() found, so a
+    # caller can offer them for disambiguation (a clarification question)
+    # instead of treating this the same as a genuine no-match (an
+    # escalation) - see run_lookup()'s product-not-found branch.
+    candidates: list = field(default_factory=list)
 
 
 def load_products(path: str = PRODUCT_MASTER_PATH) -> list[Product]:
@@ -329,17 +341,30 @@ def run_lookup(identifier: str, region_raw: str,
                 f"{suggestion_lines}\n\n"
                 "Try again with the exact name (or a SKU/RMN) from the list above."
             )
-        else:
-            message = (
-                f"No product matching '{identifier}' was found in the sample product "
-                "master (checked product name, SKU, and RMN - exact, partial-name, and "
-                "close-match). Double-check the identifier for typos, or confirm it's "
-                "one of the sample products this prototype includes - it does not cover "
-                "HP's full catalog. If the identifier is correct and just isn't in this "
-                "dataset, this app will not guess (Grounding Rule 3) - escalate to a "
-                "regulatory subject-matter expert for human review (Grounding Rule 4) "
-                "rather than assuming no requirements apply."
+            # Clarification, not escalation: the system has enough
+            # information to ask a targeted follow-up ("which of these?"),
+            # and resolving it needs the asker's answer, not a regulatory
+            # SME's judgment. reason_code and candidates are distinct from
+            # the genuine no-match branch below so callers (agent.py,
+            # app.py, activity_log) can tell the two apart instead of
+            # routing both through the same "Human review required." /
+            # HUMAN_REVIEW handling.
+            return LookupResult(
+                ok=False,
+                reason_code="ambiguous_product",
+                message=message,
+                candidates=candidates,
             )
+        message = (
+            f"No product matching '{identifier}' was found in the sample product "
+            "master (checked product name, SKU, and RMN - exact, partial-name, and "
+            "close-match). Double-check the identifier for typos, or confirm it's "
+            "one of the sample products this prototype includes - it does not cover "
+            "HP's full catalog. If the identifier is correct and just isn't in this "
+            "dataset, this app will not guess (Grounding Rule 3) - escalate to a "
+            "regulatory subject-matter expert for human review (Grounding Rule 4) "
+            "rather than assuming no requirements apply."
+        )
         return LookupResult(
             ok=False,
             reason_code="unmatched_product",
@@ -427,6 +452,48 @@ def _flatten_ordered(result: LookupResult) -> list[tuple[int, "Requirement", str
             n += 1
             flat.append((n, r, domain_key))
     return flat
+
+
+def shown_citations(result: LookupResult) -> list[str]:
+    """
+    The exact citation_source strings for every requirement
+    format_result()/format_result_details() would actually render for
+    this result - same requirements, same order, same domain narrowing
+    (via _flatten_ordered()). Empty for a failed lookup (ok=False),
+    since there's nothing to cite.
+
+    This exists so llm_agent.verify_phrased_answer() can check a
+    phrased answer against the real citation list without re-parsing
+    the rendered report's prose - the application already has this
+    list as structured data, so the check should use that directly
+    rather than re-deriving it from text.
+    """
+    if not result.ok:
+        return []
+    return [r.citation_source for _, r, _ in _flatten_ordered(result)]
+
+
+def shown_row_markers(result: LookupResult) -> list[str]:
+    """
+    The exact "[#N]" row-marker strings for every requirement
+    format_result()/format_result_details() would actually render for this
+    result - same numbering _flatten_ordered() assigns, same domain
+    narrowing. Empty for a failed lookup (ok=False).
+
+    This exists for the same reason shown_citations() does: so
+    llm_agent.verify_phrased_answer() can check a phrased answer against
+    real, structured data rather than re-parsing rendered prose. It catches
+    a failure mode shown_citations() alone cannot - a phrased answer that
+    drops one or more requirements can still contain every citation STRING
+    that's supposed to appear, if a dropped requirement happens to share its
+    citation with one that wasn't dropped (two requirements citing the same
+    source document, for instance). Checking for every row marker closes
+    that gap: one marker per requirement, so a dropped requirement is a
+    missing marker even when its citation text isn't unique.
+    """
+    if not result.ok:
+        return []
+    return [f"[#{n}]" for n, _, _ in _flatten_ordered(result)]
 
 
 def _urgency_tier(r: "Requirement") -> int:
@@ -626,6 +693,22 @@ def _match_note_line(result: LookupResult) -> list[str]:
     return [result.match_note]
 
 
+def _not_ok_header(result: LookupResult) -> str:
+    """
+    The one-line header for a failed lookup, chosen by what the failure
+    actually requires next rather than one catch-all phrase. An ambiguous
+    match (reason_code == "ambiguous_product") only needs the asker to
+    pick one of the candidates already listed in result.message - that is
+    a clarification question, not a claim that a person has to review
+    anything, so it must not say "Human review required." Every other
+    failure (unsupported region, no match at all, zero requirements on
+    file) is a genuine coverage gap and keeps that wording.
+    """
+    if result.reason_code == "ambiguous_product":
+        return "Clarification needed."
+    return "Human review required."
+
+
 def at_a_glance(result: LookupResult) -> str:
     """
     Just the header line + the "At a glance" table, standing on its own.
@@ -642,7 +725,7 @@ def at_a_glance(result: LookupResult) -> str:
     """
     if not result.ok:
         note = f"{result.match_note}\n\n" if result.match_note else ""
-        return f"\nHuman review required.\n\n{note}{result.message}\n"
+        return f"\n{_not_ok_header(result)}\n\n{note}{result.message}\n"
 
     flat = _flatten_ordered(result)
     lines = [
@@ -745,7 +828,7 @@ def format_result(result: LookupResult) -> str:
     """
     if not result.ok:
         note = f"{result.match_note}\n\n" if result.match_note else ""
-        return f"\nHuman review required.\n\n{note}{result.message}\n"
+        return f"\n{_not_ok_header(result)}\n\n{note}{result.message}\n"
 
     flat = _flatten_ordered(result)
     lines = [

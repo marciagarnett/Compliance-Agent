@@ -51,6 +51,7 @@ from functools import wraps
 from dotenv import load_dotenv
 from flask import Flask, Response, render_template, request
 
+import activity_log
 import llm_agent
 import lookup
 
@@ -138,9 +139,10 @@ def ask():
         )
 
     out_of_scope = llm_agent.detect_out_of_scope_topics(user_text)
-    extracted = llm_agent.extract_query(LLM_CLIENT, LLM_MODEL, user_text)
+    extracted, extract_fail_reason = llm_agent.extract_query(LLM_CLIENT, LLM_MODEL, user_text)
 
     if extracted is None:
+        activity_log.log_event(activity_log.FAILED, mode="ask", reason=extract_fail_reason)
         report = (
             "[Couldn't reach the Claude API to interpret that question, or the "
             "response couldn't be read. Please resubmit your question - if this "
@@ -158,6 +160,10 @@ def ask():
     requested_domains = extracted.get("requested_domains", [])
 
     if not identifier or not region:
+        activity_log.log_event(
+            activity_log.FAILED, mode="ask", identifier=identifier, region=region,
+            reason="missing_identifier_or_region",
+        )
         report = (
             f"[Could not confidently identify both a product and a region in that "
             f"question (got identifier={identifier!r}, region={region!r}). Try "
@@ -184,11 +190,53 @@ def ask():
     phrased = llm_agent.phrase_answer(LLM_CLIENT, LLM_MODEL, user_text, full_report, result.ok)
 
     heads_up = [hit["note"] for hit in extracted.get("out_of_scope_topics", out_of_scope)]
-    if not phrased:
+    # Same deterministic, application-level check agent.py's CLI path uses -
+    # a phrased answer that drops a citation or the required human-review
+    # sentinel is never shown, no matter how well-formed it reads.
+    verified_ok = llm_agent.verify_phrased_answer(
+        phrased, lookup.shown_citations(result), result.ok,
+        lookup.shown_row_markers(result),
+    )
+    phrase_call_failed = phrased is None  # captured before phrased is overwritten below
+    if phrased and not verified_ok:
+        phrased = (
+            "[The phrased summary didn't pass this app's check against the "
+            "verified data (missing a citation, or missing the required "
+            "human-review notice) - showing the verified lookup result "
+            "directly.]"
+        )
+    elif not phrased:
         phrased = (
             "[Couldn't reach the Claude API to phrase a summary - showing the "
             "verified lookup result directly.]"
         )
+
+    # One log entry per completed lookup attempt on this route - there was
+    # none at all here before this change, unlike agent.py's CLI path.
+    # Fired after the full pipeline so it reflects what was actually
+    # returned, not just whether the lookup matched.
+    if not result.ok:
+        phrase_reason = result.reason_code
+    elif not verified_ok:
+        phrase_reason = "llm_phrase_failed" if phrase_call_failed else "verification_failed"
+    else:
+        phrase_reason = ""
+    # An ambiguous product match (several plausible candidates, no single
+    # resolution) is a clarification situation, not an escalation - the
+    # candidates are already listed in `phrased`/`verified_report` above,
+    # and resolving it needs the asker to resubmit with one of those exact
+    # names, not a regulatory SME's review. Logged as its own outcome so
+    # it isn't counted the same as a genuine coverage gap.
+    if result.ok:
+        outcome = activity_log.COMPLETED
+    elif result.reason_code == "ambiguous_product":
+        outcome = activity_log.CLARIFICATION
+    else:
+        outcome = activity_log.HUMAN_REVIEW
+    activity_log.log_event(
+        outcome,
+        mode="ask", identifier=identifier, region=region, reason=phrase_reason,
+    )
 
     return render_template(
         "index.html", llm_available=LLM_AVAILABLE,

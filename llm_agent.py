@@ -15,10 +15,10 @@ structured (non-LLM) flow. The app must keep working either way.
 """
 from __future__ import annotations
 
-import json
 import os
-import re
 from typing import Optional
+
+import grounding
 
 try:
     import anthropic  # type: ignore
@@ -42,15 +42,43 @@ def get_client():
         return None
 
 
-def _extract_json_object(text: str) -> Optional[dict]:
-    """Best-effort pull of the first {...} JSON object out of a model response."""
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if not match:
-        return None
-    try:
-        return json.loads(match.group(0))
-    except json.JSONDecodeError:
-        return None
+# Forced tool-use schema for extract_query() - the model must call this tool
+# and the Anthropic SDK returns schema-validated arguments directly, so
+# there is no free-text JSON to regex out of a reply and no way for a
+# malformed response to look like a parse failure caused by something else
+# (a stray brace in prose, a markdown fence, a clarifying aside). A failure
+# here is either the model declining the tool call or the SDK call itself
+# raising - both handled the same way, as "couldn't extract", below.
+EXTRACT_QUERY_TOOL = {
+    "name": "extract_compliance_query",
+    "description": (
+        "Record the product identifier and destination region found in the "
+        "user's question about compliance requirements, exactly as the user "
+        "wrote them."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "identifier": {
+                "type": "string",
+                "description": (
+                    "The product name, SKU, or RMN exactly as the user wrote "
+                    "it - do not correct or guess spelling. Empty string if "
+                    "the question doesn't name a product."
+                ),
+            },
+            "region": {
+                "type": "string",
+                "description": (
+                    "The destination country/region exactly as the user "
+                    "wrote it, e.g. 'Taiwan', 'the EU', 'UK', 'China', 'US'. "
+                    "Empty string if the question doesn't name one."
+                ),
+            },
+        },
+        "required": ["identifier", "region"],
+    },
+}
 
 
 # The seven requirement domains lookup.py actually tracks, and a deterministic,
@@ -176,47 +204,70 @@ def detect_out_of_scope_topics(user_text: str) -> list[dict]:
     return hits
 
 
-def extract_query(client, model: str, user_text: str) -> Optional[dict]:
+def extract_query(client, model: str, user_text: str) -> tuple[Optional[dict], str]:
     """
-    Ask the model to pull {"identifier": ..., "region": ...} out of free text,
+    Ask the model to call the extract_compliance_query tool (forced via
+    tool_choice) to record {identifier, region} from the user's question,
     and separately run the deterministic detect_out_of_scope_topics() check
     (no model call) so a question can be flagged as touching an untracked
     topic even though the model itself never judges scope.
-    Returns None (never raises to the caller) if the SDK call fails or the
-    response can't be parsed - agent.py treats None as "fall back to manual
-    entry", and in that branch calls detect_out_of_scope_topics() itself so
-    the scope notice still shows up without the model's help.
+
+    Returns (result, reason) - never raises to the caller:
+      - On success: (the parsed dict, "").
+      - On failure: (None, reason), where reason is "tool_not_called" (the
+        model's response didn't include a call to extract_compliance_query -
+        shouldn't happen under a forced tool_choice, but handled rather than
+        assumed away) or "sdk_call_failed" (the API call itself raised - no
+        network, bad/revoked key, rate limit, timeout, etc. - the exact
+        cause isn't distinguished further, but "the call never completed"
+        is now distinguishable from "the model didn't do what was asked").
+    This replaces a single generic None that collapsed both failure modes
+    together; callers now get a reason_code-shaped signal of why, the same
+    pattern lookup.LookupResult already uses for its own ok/reason_code
+    pairing. agent.py/app.py treat result is None as "fall back to manual
+    entry" exactly as before, and in that branch call
+    detect_out_of_scope_topics() themselves so the scope notice still shows
+    up without the model's help; reason is new, and is only used for more
+    specific activity-log entries.
     """
     system = (
-        "You extract two fields from a user's question about product compliance "
-        "requirements: 'identifier' (a product name, SKU, or RMN as the user wrote it "
-        "- do not correct or guess spelling) and 'region' (the destination country/"
-        "region as the user wrote it, e.g. 'Taiwan', 'the EU', 'UK', 'China', 'US'). "
-        "Respond with ONLY a JSON object: {\"identifier\": \"...\", \"region\": \"...\"}. "
-        "If either field is missing or unclear from the question, set it to an empty "
-        "string. Do not invent a product or region that wasn't mentioned - only use "
-        "what the user actually wrote (see GROUNDING_RULES.md, Rule 2: do not invent "
-        "facts)."
+        "You extract fields from a user's question about product compliance "
+        "requirements by calling the extract_compliance_query tool - do not "
+        "correct or guess spelling on either field, and leave a field empty "
+        "if the question doesn't name it.\n\n"
+        "Grounding rule that governs this task (full rule list and rationale "
+        "in GROUNDING_RULES.md):\n"
+        f"{grounding.render_rules([2])}\n"
+        "Concretely: do not invent a product or region that wasn't mentioned - "
+        "only use what the user actually wrote."
     )
     try:
         resp = client.messages.create(
             model=model,
             max_tokens=200,
             system=system,
+            tools=[EXTRACT_QUERY_TOOL],
+            tool_choice={"type": "tool", "name": "extract_compliance_query"},
             messages=[{"role": "user", "content": user_text}],
         )
-        text = "".join(block.text for block in resp.content if getattr(block, "type", "") == "text")
-        parsed = _extract_json_object(text)
-        if not parsed:
-            return None
-        return {
+        tool_use = next(
+            (block for block in resp.content
+             if getattr(block, "type", "") == "tool_use"
+             and getattr(block, "name", "") == "extract_compliance_query"),
+            None,
+        )
+        if tool_use is None:
+            return None, "tool_not_called"
+        parsed = tool_use.input  # already a dict, schema-validated by the API
+        result = {
             "identifier": str(parsed.get("identifier", "")).strip(),
             "region": str(parsed.get("region", "")).strip(),
             "out_of_scope_topics": detect_out_of_scope_topics(user_text),
             "requested_domains": detect_requested_domains(user_text),
         }
+        return result, ""
     except Exception:
-        return None
+        return None, "sdk_call_failed"
 
 
 def phrase_answer(client, model: str, user_text: str, verified_report: str, found: bool) -> Optional[str]:
@@ -229,33 +280,30 @@ def phrase_answer(client, model: str, user_text: str, verified_report: str, foun
     """
     system = (
         "You are presenting the result of a compliance-requirements lookup to a "
-        "stakeholder. This application follows five grounding rules (full text in "
-        "GROUNDING_RULES.md) that govern everything you write here:\n"
-        "1. Use approved reference information when making decisions or "
-        "recommendations - your only source of facts is VERIFIED_DATA below, the "
-        "already-fact-checked result of a deterministic lookup against this "
-        "project's approved reference material.\n"
-        "2. Do not invent organizational policies, facts, rules, or procedures. "
-        "Nothing you write may introduce a requirement, policy, or procedure that "
-        "isn't already stated in VERIFIED_DATA.\n"
-        "3. If the reference does not contain enough information, do not make up "
-        "an answer or action. If VERIFIED_DATA reports 'not found' or a coverage "
-        "gap, say so plainly - never imply the product is compliant, that nothing "
-        "is required, or that a gap means it's safe to proceed.\n"
-        "4. Require human review when the available information is insufficient "
-        "or conflicting. When found is False, your answer MUST open with the "
-        "exact line 'Human review required.' on its own, then a blank line, "
-        "then a plain explanation of why - drawn only from VERIFIED_DATA's "
-        "message, never invented or reworded away from what it actually says. "
-        "Preserve every escalate-to-a-regulatory-SME notice in VERIFIED_DATA "
-        "exactly as written. This prototype does not attempt to resolve "
-        "conflicting source data automatically - if VERIFIED_DATA ever contains "
+        "stakeholder. This application follows five grounding rules (full rule "
+        "list and rationale in GROUNDING_RULES.md):\n"
+        f"{grounding.render_rules([1, 2, 3, 4, 5])}\n\n"
+        "Concretely, for this task:\n"
+        "1. Your only source of facts is VERIFIED_DATA below, the already-fact-"
+        "checked result of a deterministic lookup against this project's "
+        "approved reference material.\n"
+        "2. Nothing you write may introduce a requirement, policy, or procedure "
+        "that isn't already stated in VERIFIED_DATA.\n"
+        "3. If VERIFIED_DATA reports 'not found' or a coverage gap, say so "
+        "plainly - never imply the product is compliant, that nothing is "
+        "required, or that a gap means it's safe to proceed.\n"
+        "4. When found is False, your answer MUST open with the exact line "
+        "'Human review required.' on its own, then a blank line, then a plain "
+        "explanation of why - drawn only from VERIFIED_DATA's message, never "
+        "invented or reworded away from what it actually says. Preserve every "
+        "escalate-to-a-regulatory-SME notice in VERIFIED_DATA exactly as "
+        "written. This prototype does not attempt to resolve conflicting "
+        "source data automatically - if VERIFIED_DATA ever contains "
         "requirements that read as contradictory, open with that same 'Human "
         "review required.' line and flag the conflict explicitly as a "
         "human-review case rather than picking one.\n"
-        "5. When practical, identify which approved source or rule was used. "
-        "Every citation ('Source: ...') in VERIFIED_DATA must still appear in your "
-        "answer, attached to the requirement it supports.\n\n"
+        "5. Every citation ('Source: ...') in VERIFIED_DATA must still appear "
+        "in your answer, attached to the requirement it supports.\n\n"
         "Formatting: the At a Glance table in VERIFIED_DATA (row numbers, "
         "domain, tracking status, existing/emerging status, format, and "
         "comply-by date) has already been printed to the user, verbatim and "
@@ -267,19 +315,89 @@ def phrase_answer(client, model: str, user_text: str, verified_report: str, foun
         "add any requirement, status tag ([EXISTING]/[EMERGING]), "
         "documentation-format tag ([PRINT]/[ONLINE]/[EITHER]), date, or "
         "citation. Every requirement and citation in VERIFIED_DATA must "
-        "still be present, with its full original wording, in your answer."
+        "still be present, with its full original wording, in your answer. "
+        "Each requirement in VERIFIED_DATA is tagged with a row marker like "
+        "'[#3]' - reproduce that exact marker, unchanged, immediately before "
+        "the requirement it tags, for every requirement you include (the "
+        "same marker the At a Glance table's row numbers already use, so a "
+        "reader can match your prose back to that table). If you are ever "
+        "at risk of running out of space before covering every requirement, "
+        "write shorter framing prose rather than dropping a requirement - "
+        "every requirement and its marker must appear."
     )
     user_msg = (
         f"The user's original question was: {user_text!r}\n\n"
         f"VERIFIED_DATA (found={found}):\n{verified_report}"
     )
     try:
+        # 3000, not 1200: a real run on a 12-requirement product was
+        # observed truncating mid-report at the 1200-token cap (markdown
+        # headers/bold/rules cost noticeably more tokens than the plain
+        # report being paraphrased) - verify_phrased_answer()'s row-marker
+        # check below is the actual safety net against a truncated or
+        # otherwise incomplete answer reaching the user, but there is no
+        # reason to make truncation likely in normal use when raising this
+        # is this cheap.
         resp = client.messages.create(
             model=model,
-            max_tokens=1200,
+            max_tokens=3000,
             system=system,
             messages=[{"role": "user", "content": user_msg}],
         )
         return "".join(block.text for block in resp.content if getattr(block, "type", "") == "text").strip()
     except Exception:
         return None
+
+
+def verify_phrased_answer(
+    phrased: Optional[str],
+    citations: list[str],
+    found: bool,
+    row_markers: Optional[list[str]] = None,
+) -> bool:
+    """
+    Deterministic (no model call) check of phrase_answer()'s own output
+    against the facts it was supposed to preserve. This is an application-
+    level decision rule, not a model self-assessment - the Iteration 3
+    harness design's point on this (see AGENT_SPEC.md / the harness design
+    doc) is that whether a phrased answer is acceptable must be decided by
+    code checking the model's output against known facts, never by asking
+    the model to confirm its own compliance.
+
+    Checks, in order:
+      1. `phrased` must be non-empty.
+      2. If `found` is False, `phrased` must open with the exact sentinel
+         line "Human review required." - the one requirement
+         phrase_answer()'s system prompt places on a not-found/coverage-gap
+         result (Grounding Rule 4).
+      3. Every string in `citations` (pass lookup.shown_citations(result))
+         must appear verbatim somewhere in `phrased` - nothing the report
+         cited may be dropped when the model rephrases it (Grounding
+         Rule 5).
+      4. Every marker in `row_markers` (pass lookup.shown_row_markers(result))
+         must appear verbatim somewhere in `phrased`. This exists because
+         check 3 alone has a real, observed gap: a live run truncated a
+         12-requirement answer after requirement #10, yet still passed
+         check 3, because #10/#11/#12 all cited the same source document -
+         the one citation string that survived the cutoff (from #10) was
+         enough to satisfy "every citation appears," even though two whole
+         requirements were silently missing. Row markers are one-per-
+         requirement (lookup.shown_row_markers()), so a dropped requirement
+         is always a missing marker, even when its citation isn't unique.
+         `row_markers` defaults to None/empty, which skips this check -
+         for callers that haven't been updated to pass it, this behaves
+         exactly as it did before this check was added.
+
+    Returns False on any failure. The caller's job on False is to not show
+    `phrased` to the user and fall back to the verified report instead -
+    the exact same fallback agent.py/app.py already use when
+    phrase_answer() itself returns None, so this adds a new REASON to take
+    that branch, not a new branch.
+    """
+    if not phrased:
+        return False
+    if not found and not phrased.startswith("Human review required."):
+        return False
+    if not all(citation in phrased for citation in citations if citation):
+        return False
+    return all(marker in phrased for marker in (row_markers or []) if marker)
