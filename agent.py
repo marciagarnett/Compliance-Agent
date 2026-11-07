@@ -232,7 +232,8 @@ def natural_language_lookup(client, model, products, requirements, user_text: st
     # unconditionally since it's cheap and both call sites need it below.
     not_ok_header = lookup.not_ok_header(result)
     phrased = llm_agent.phrase_answer(
-        client, model, user_text, verified_report, result.ok, not_ok_header
+        client, model, user_text, verified_report, result.ok, not_ok_header,
+        result.region_mismatch_note,
     )
     # The At a Glance table was already printed above for a successful
     # lookup, so only the rest of the report prints here - otherwise the
@@ -246,6 +247,7 @@ def natural_language_lookup(client, model, products, requirements, user_text: st
     verified_ok = llm_agent.verify_phrased_answer(
         phrased, lookup.shown_citations(result), result.ok,
         lookup.shown_row_markers(result), not_ok_header,
+        result.region_mismatch_note,
     )
     # One log entry per turn, fired here (after the full pipeline, not
     # right after run_lookup()) so it can reflect what the user actually

@@ -235,7 +235,12 @@ def main():
     print(f"new rows added: {len(new_rows)}")
 
     with open(PM_PATH, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["product_name", "sku", "rmn", "category"])
+        # "region" added so a re-run doesn't silently drop the column the
+        # ASCM-sourced build scripts now populate on existing rows - this
+        # source (KME tracker) has no Local Code field of its own, so new
+        # rows from here just get region="" via DictWriter's restval,
+        # same as before this column existed.
+        writer = csv.DictWriter(f, fieldnames=["product_name", "sku", "rmn", "category", "region"])
         writer.writeheader()
         writer.writerows(existing)
         writer.writerows(new_rows)

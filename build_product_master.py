@@ -55,6 +55,23 @@ PM_PATH = "data/product_master.csv"
 TODAY = datetime(2026, 9, 23)
 
 
+# Local Code -> region, for the handful of codes this project's own
+# compliance_requirements.csv actually tracks as a region. Kept in sync
+# with lookup.py's SUFFIX_TO_REGION and build_product_master_categories2.py's
+# copy of this same table - same 14 regions, same source (a direct scan of
+# every ASCM Report_*.xlsx file's Local Code and description columns,
+# cross-checked for a 1:1, collision-free mapping - see
+# evaluation_review_and_priorities.md). An unrecognized or blank Local Code
+# leaves region "" rather than guessing.
+LOCAL_CODE_TO_REGION = {
+    "ABA": "US", "AB0": "Taiwan", "ABU": "UK", "ABB": "EU/UK",
+    "AB2": "China", "AB1": "South Korea", "ABJ": "Japan",
+    "ABG": "Australia", "AC4": "Brazil", "ACJ": "India",
+    "AB4": "Singapore", "A2N": "Saudi Arabia", "A2K": "Philippines",
+    "ABT": "Israel",
+}
+
+
 def is_radio_bearing(desc: str) -> bool:
     d = desc.lower()
     return any(k in d for k in ["bluetooth", " bt ", "bt700", "dect", "wireless", "+bt"])
@@ -101,11 +118,15 @@ def main():
         else:
             category = category_raw
 
+        local_code = (chosen[4] or "").strip() if len(chosen) > 4 else ""
+        region = LOCAL_CODE_TO_REGION.get(local_code, "")
+
         new_rows.append({
             "product_name": desc,
             "sku": pn,
             "rmn": "",
             "category": category,
+            "region": region,
         })
 
     new_rows.sort(key=lambda r: (r["category"], r["product_name"]))
@@ -116,7 +137,7 @@ def main():
     print(f"new rows added: {len(new_rows)}")
 
     with open(PM_PATH, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["product_name", "sku", "rmn", "category"])
+        writer = csv.DictWriter(f, fieldnames=["product_name", "sku", "rmn", "category", "region"])
         writer.writeheader()
         writer.writerows(existing)
         writer.writerows(new_rows)

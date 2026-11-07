@@ -19,13 +19,119 @@ COMPLIANCE_PATH = os.path.join(DATA_DIR, "compliance_requirements.csv")
 
 # Canonical region names, in display order, mapped from accepted user input.
 REGION_ALIASES = {
-    "eu": "EU/UK", "eu/uk": "EU/UK", "uk": "EU/UK", "eu / uk": "EU/UK",
-    "european union": "EU/UK", "united kingdom": "EU/UK", "eu-uk": "EU/UK",
+    # NOTE (2026-10-30): "UK" used to alias to "EU/UK". It now resolves to its
+    # own standalone "UK" region, because UK product cybersecurity runs under
+    # the UK PSTI Act, not the EU CRA -- treating them as the same region was
+    # itself a data/matching bug (see compliance_data_crosscheck_findings.md).
+    # "EU/UK" remains the combined region for domains that still only carry
+    # one combined row (e.g. battery_safety) and for genuinely EU-specific terms.
+    "eu": "EU/UK", "eu/uk": "EU/UK", "eu / uk": "EU/UK",
+    "european union": "EU/UK", "eu-uk": "EU/UK",
+    "uk": "UK", "united kingdom": "UK", "gb": "UK", "great britain": "UK",
+    "britain": "UK",
     "us": "US", "usa": "US", "u.s.": "US", "u.s.a.": "US",
     "united states": "US", "america": "US",
     "china": "China", "cn": "China", "prc": "China",
     "taiwan": "Taiwan", "tw": "Taiwan", "roc": "Taiwan",
 }
+
+# Issue D (see evaluation_review_and_priorities.md): a product's own name
+# often carries a trailing market-code suffix (confirmed this session by
+# tracing product_master.csv back to HP's ASCM "Local Code" source data -
+# e.g. "...Dock TW" traces to ASCM Local Code AB0, a genuine, structured
+# field HP tracks, that gets flattened into free text and then discarded
+# when product_master.csv is built). Nothing previously checked that
+# implied region against the region actually requested, which is exactly
+# what let T6 (a Taiwan-market docking station queried as "UK") return a
+# confident, fully-formatted answer with no indication anything was off.
+#
+# Deliberately NOT exhaustive. Only unambiguous, single-region suffixes are
+# included - confirmed either by the ASCM Local Code table directly, or
+# (TW, UK, US, China/PRC, Taiwan) by this project's existing REGION_ALIASES.
+# Suffixes that denote a *group* of countries rather than one (ARAB - Saudi
+# Arabia and other Arabic-speaking markets; LTNA - Latin America broadly;
+# A/P - Asia/Pacific broadly; CAN/ENG) or that don't correspond to any
+# region this dataset tracks (ICELAND) are deliberately left out, so this
+# check only ever fires where the mapping is unambiguous - never a guess,
+# applying this project's own Grounding Rule 3 to the check itself, not
+# just to the agent's answers.
+SUFFIX_TO_REGION = {
+    "US": "US", "TW": "Taiwan", "UK": "UK", "EURO": "EU/UK",
+    "PRC": "China", "KOR": "South Korea", "JPN2": "Japan",
+    "AUST": "Australia", "BRZL": "Brazil", "INDIA": "India",
+    "SING": "Singapore", "SAU": "Saudi Arabia", "PHILI": "Philippines",
+    "HE": "Israel",
+}
+
+# Tokens that *look* like a region suffix but are explicitly excluded so
+# this check never misreads them as one. WW marks a worldwide/global
+# variant (not any one destination); TAA and GSA/TAA mark a US government
+# Trade Agreements Act compliance variant - a procurement designation, not
+# a market.
+NOT_A_REGION_SUFFIX = {"WW", "TAA", "GSA/TAA"}
+
+
+def _implied_region(product_name: str) -> Optional[str]:
+    """
+    Return the region a product's own name implies via a trailing
+    market-code suffix (e.g. "...Dock TW" -> "Taiwan"), or None if the
+    name's last token isn't one of the confirmed, unambiguous codes in
+    SUFFIX_TO_REGION. Deliberately conservative: returns None (no opinion)
+    for a suffix that's region-like but ambiguous or covers more than one
+    region (see SUFFIX_TO_REGION's comment above) rather than guessing.
+    """
+    if not product_name:
+        return None
+    toks = product_name.strip().split()
+    if not toks:
+        return None
+    last = toks[-1]
+    if last in NOT_A_REGION_SUFFIX:
+        return None
+    return SUFFIX_TO_REGION.get(last)
+
+
+def _product_region(product: "Product") -> Optional[str]:
+    """
+    The region a product variant implies, preferring the structured
+    `Product.region` field (sourced from the ASCM export's own Local Code
+    column, authoritative) when set, and falling back to _implied_region()'s
+    free-text suffix parse only when it's blank (rows with no known Local
+    Code). Returns None when neither source has an opinion.
+    """
+    if product.region:
+        return product.region
+    return _implied_region(product.product_name)
+
+
+def _region_mismatch_note(product: "Product", region: str) -> str:
+    """
+    One-line note when a product's own name implies a different region
+    than the one actually requested - e.g. a Taiwan-market SKU ("...TW")
+    queried against the UK (T6). Empty string when there's no implied
+    region, or it matches the requested region, so an unaffected query's
+    report is byte-identical to before this check existed - the same
+    non-regression guarantee _match_note_line() already gives for
+    find_product_verbose()'s fuzzy-match note.
+
+    This does not block or refuse the lookup - the requirements shown are
+    still for the region actually requested, exactly as asked. It only
+    flags that the product name itself suggests a different market, so a
+    user relying on the absence of a flag isn't misled the way T6 showed.
+    """
+    implied = _product_region(product)
+    if implied is None or implied == region:
+        return ""
+    return (
+        f"Note: '{product.product_name}' appears, from its own name, to be "
+        f"a {implied}-market product variant, but this lookup is for "
+        f"{region}. The requirements below are for {region} as requested - "
+        f"confirm this is the product variant you intend, since a "
+        f"different market's variant of the same base product may carry "
+        f"different requirements."
+    )
+
+
 def _discover_valid_regions(path: str = COMPLIANCE_PATH) -> list[str]:
     """VALID_REGIONS is derived from whatever regions actually have rows in
     data/compliance_requirements.csv, rather than a hardcoded list - so
@@ -71,6 +177,16 @@ class Product:
     sku: str
     rmn: str
     category: str
+    # Structured market/region code, carried through from the ASCM source
+    # export's own "Local Code" field by build_product_master_categories2.py
+    # / build_product_master.py (see LOCAL_CODE_TO_REGION in those scripts)
+    # rather than re-derived from the product name's trailing suffix at
+    # lookup time. "" for rows with no known Local Code (e.g. KME-tracker
+    # sourced rows, or an unrecognized code) - those fall back to
+    # _implied_region()'s suffix parsing, unchanged. Default "" keeps this
+    # compatible with any product_master.csv written before this column
+    # existed.
+    region: str = ""
 
 
 @dataclass
@@ -120,6 +236,11 @@ class LookupResult:
     # instead of treating this the same as a genuine no-match (an
     # escalation) - see run_lookup()'s product-not-found branch.
     candidates: list = field(default_factory=list)
+    # Set when the product's own name implies a different region than the
+    # one requested (e.g. a "...TW" SKU queried against the UK) - see
+    # _region_mismatch_note(). "" when there's no implied region, or it
+    # matches what was requested, so an unaffected report is unchanged.
+    region_mismatch_note: str = ""
 
 
 def load_products(path: str = PRODUCT_MASTER_PATH) -> list[Product]:
@@ -371,6 +492,8 @@ def run_lookup(identifier: str, region_raw: str,
             message=message,
         )
 
+    region_mismatch_note = _region_mismatch_note(product, region)
+
     grouped = get_requirements(product.category, region, requirements)
     if requested_domains:
         scoped_total = sum(len(grouped.get(d, [])) for d in requested_domains)
@@ -408,12 +531,14 @@ def run_lookup(identifier: str, region_raw: str,
             reason_code="zero_requirements_on_file",
             requested_domains=requested_domains,
             match_note=match_note,
+            region_mismatch_note=region_mismatch_note,
             message=scope_message,
         )
 
     return LookupResult(
         ok=True, product=product, region=region, requirements_by_domain=grouped,
         requested_domains=requested_domains, match_note=match_note,
+        region_mismatch_note=region_mismatch_note,
     )
 
 
@@ -693,6 +818,18 @@ def _match_note_line(result: LookupResult) -> list[str]:
     return [result.match_note]
 
 
+def _region_mismatch_note_line(result: LookupResult) -> list[str]:
+    """
+    A one-line note when the product's own name implies a different
+    region than the one requested (see _region_mismatch_note()) - empty
+    list otherwise, so an unaffected report is byte-identical to before
+    this check existed.
+    """
+    if not result.region_mismatch_note:
+        return []
+    return [result.region_mismatch_note]
+
+
 def _not_ok_header(result: LookupResult) -> str:
     """
     The one-line header for a failed lookup, chosen by what the failure
@@ -746,7 +883,10 @@ def at_a_glance(result: LookupResult) -> str:
     that case.
     """
     if not result.ok:
-        note = f"{result.match_note}\n\n" if result.match_note else ""
+        notes = "\n\n".join(
+            n for n in (result.match_note, result.region_mismatch_note) if n
+        )
+        note = f"{notes}\n\n" if notes else ""
         return f"\n{_not_ok_header(result)}\n\n{note}{result.message}\n"
 
     flat = _flatten_ordered(result)
@@ -756,6 +896,7 @@ def at_a_glance(result: LookupResult) -> str:
         f"Category: {result.product.category}   Destination region: {result.region}",
     ]
     lines.extend(_match_note_line(result))
+    lines.extend(_region_mismatch_note_line(result))
     lines.extend(_scope_line(result))
     lines.append("=" * 78)
     lines.extend(_build_table_lines(flat))
@@ -849,7 +990,10 @@ def format_result(result: LookupResult) -> str:
     available even though it is told not to reproduce it.
     """
     if not result.ok:
-        note = f"{result.match_note}\n\n" if result.match_note else ""
+        notes = "\n\n".join(
+            n for n in (result.match_note, result.region_mismatch_note) if n
+        )
+        note = f"{notes}\n\n" if notes else ""
         return f"\n{_not_ok_header(result)}\n\n{note}{result.message}\n"
 
     flat = _flatten_ordered(result)
@@ -859,6 +1003,7 @@ def format_result(result: LookupResult) -> str:
         f"Category: {result.product.category}   Destination region: {result.region}",
     ]
     lines.extend(_match_note_line(result))
+    lines.extend(_region_mismatch_note_line(result))
     lines.extend(_scope_line(result))
     lines.append("=" * 78)
     lines.extend(_build_table_lines(flat))
@@ -908,6 +1053,7 @@ def format_result_verified(result: LookupResult) -> str:
         f"Category: {result.product.category}   Destination region: {result.region}",
     ]
     lines.extend(_match_note_line(result))
+    lines.extend(_region_mismatch_note_line(result))
     lines.extend(_scope_line(result))
     lines.extend(_itemized_report_lines(result, flat, note_table_above=False))
     lines.extend(_closing_notice_lines())

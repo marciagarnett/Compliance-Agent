@@ -16,6 +16,7 @@ structured (non-LLM) flow. The app must keep working either way.
 from __future__ import annotations
 
 import os
+import re
 from typing import Optional
 
 import grounding
@@ -273,6 +274,7 @@ def extract_query(client, model: str, user_text: str) -> tuple[Optional[dict], s
 def phrase_answer(
     client, model: str, user_text: str, verified_report: str, found: bool,
     not_ok_header: str = "Human review required.",
+    region_mismatch_note: str = "",
 ) -> Optional[str]:
     """
     Turn the deterministic, already-verified report into friendlier prose.
@@ -308,13 +310,16 @@ def phrase_answer(
         "3. If VERIFIED_DATA reports 'not found' or a coverage gap, say so "
         "plainly - never imply the product is compliant, that nothing is "
         "required, or that a gap means it's safe to proceed.\n"
-        f"4. When found is False, your answer MUST open with the exact line "
-        f"{not_ok_header!r} on its own, then a blank line, then a plain "
-        "explanation of why - drawn only from VERIFIED_DATA's message, never "
-        "invented or reworded away from what it actually says. VERIFIED_DATA "
-        "itself opens with this same line - match it exactly, do not "
-        "substitute a different phrase even if it reads more naturally to "
-        "you. If this line reads 'Clarification needed.', your job is to ask "
+        f"4. When found is False, the exact line {not_ok_header!r} must "
+        "appear verbatim, as its own line and as plain text (no markdown "
+        "bold/italics wrapped around it), near the start of your answer - a "
+        "brief one-sentence lead-in before it is fine, but do not bury it, "
+        "paraphrase it, or omit it. Follow it with a plain explanation of "
+        "why - drawn only from VERIFIED_DATA's message, never invented or "
+        "reworded away from what it actually says. VERIFIED_DATA itself "
+        "opens with this same line - match it exactly, do not substitute a "
+        "different phrase even if it reads more naturally to you. If this "
+        "line reads 'Clarification needed.', your job is to ask "
         "the user, in your own words, to pick one of the candidate products "
         "VERIFIED_DATA lists - do not call this a 'human review' situation, "
         "do not suggest escalating to anyone, and do not imply anything is "
@@ -323,12 +328,34 @@ def phrase_answer(
         "regulatory-SME notice in VERIFIED_DATA exactly as written. This "
         "prototype does not attempt to resolve conflicting source data "
         "automatically - if VERIFIED_DATA ever contains requirements that "
-        "read as contradictory, open with 'Human review required.' and flag "
+        "read as contradictory, include the line 'Human review required.' and flag "
         "the conflict explicitly as a human-review case rather than picking "
         "one.\n"
         "5. Every citation ('Source: ...') in VERIFIED_DATA must still appear "
         "in your answer, attached to the requirement it supports.\n\n"
-        "Formatting: the At a Glance table in VERIFIED_DATA (row numbers, "
+        + (
+            # Issue D (see evaluation_review_and_priorities.md): added after a
+            # live retest showed the model correctly RECOGNIZED and explained
+            # a region mismatch in its own words, but reworded it instead of
+            # reproducing it - which is exactly what verify_phrased_answer()'s
+            # matching check requires not to happen, the same way it requires
+            # citations and not_ok_header to survive verbatim. Without this
+            # explicit instruction, that check would fail on every single
+            # mismatch case (confirmed live, not assumed), discarding a
+            # correct phrased answer and falling back to the raw report every
+            # time. Conditional on region_mismatch_note being set so the
+            # prompt says nothing about this on the (overwhelmingly common)
+            # case where there's no mismatch to report.
+            (
+                "6. VERIFIED_DATA contains this region-mismatch note - "
+                "reproduce it verbatim, as its own line, somewhere near the "
+                "start of your answer, the same way the required human-review "
+                "line and every citation must appear unchanged. Do not "
+                "paraphrase, soften, shorten, or omit it, even though it "
+                f"reads like a normal sentence: {region_mismatch_note!r}\n\n"
+            ) if region_mismatch_note else ""
+        )
+        + "Formatting: the At a Glance table in VERIFIED_DATA (row numbers, "
         "domain, tracking status, existing/emerging status, format, and "
         "comply-by date) has already been printed to the user, verbatim and "
         "unedited, immediately before your response - do not reproduce or "
@@ -379,6 +406,7 @@ def verify_phrased_answer(
     found: bool,
     row_markers: Optional[list[str]] = None,
     not_ok_header: str = "Human review required.",
+    region_mismatch_note: str = "",
 ) -> bool:
     """
     Deterministic (no model call) check of phrase_answer()'s own output
@@ -391,19 +419,28 @@ def verify_phrased_answer(
 
     Checks, in order:
       1. `phrased` must be non-empty.
-      2. If `found` is False, `phrased` must open with the exact sentinel
-         line given by `not_ok_header` (pass lookup.not_ok_header(result) -
-         "Clarification needed." for an ambiguous product match, "Human
-         review required." for every other coverage gap). This used to be
-         hardcoded to "Human review required." for every not-found case.
-         That was a real bug, not just an unlikely edge case: a live run
-         asking about an ambiguous product got a correct, well-formed
-         clarification answer from the model, but this check rejected it
-         because it opened with something other than the literal string
-         "Human review required." - which a clarification case has no
-         reason to say and phrase_answer()'s own prompt no longer tells it
-         to. `not_ok_header` defaults to "Human review required." so a
-         caller not yet updated to pass it keeps the old behavior.
+      2. If `found` is False, the exact sentinel line given by
+         `not_ok_header` (pass lookup.not_ok_header(result) - "Clarification
+         needed." for an ambiguous product match, "Human review required."
+         for every other coverage gap) must appear verbatim somewhere in
+         `phrased` - a substring check, like checks 3/4 below, not a
+         startswith() check. This was originally a startswith() check and
+         that was ALSO a real, separately-observed bug: even after
+         `not_ok_header` stopped being hardcoded (see below), a live
+         clarification answer was still rejected because the model opened
+         with a one-sentence conversational lead-in before the sentinel
+         line (and wrapped the sentinel itself in markdown bold) - both
+         reasonable, even good, things for a model to write, that a strict
+         "must be the literal first characters" check can't tolerate. The
+         content was correct; only its exact position/formatting wasn't
+         what startswith() demanded. A plain substring check still
+         guarantees the required line is genuinely present, unparaphrased,
+         without also dictating formatting the check has no real reason to
+         care about. Before that, this was hardcoded to "Human review
+         required." for every not-found case, including a clarification
+         case that had no reason to say that - a live run surfaced that bug
+         too. `not_ok_header` defaults to "Human review required." so a
+         caller not yet updated to pass it keeps prior behavior.
       3. Every string in `citations` (pass lookup.shown_citations(result))
          must appear verbatim somewhere in `phrased` - nothing the report
          cited may be dropped when the model rephrases it (Grounding
@@ -430,8 +467,34 @@ def verify_phrased_answer(
     """
     if not phrased:
         return False
-    if not found and not phrased.startswith(not_ok_header):
+    if not found and not_ok_header not in phrased:
         return False
     if not all(citation in phrased for citation in citations if citation):
         return False
-    return all(marker in phrased for marker in (row_markers or []) if marker)
+    if not all(marker in phrased for marker in (row_markers or []) if marker):
+        return False
+    # 5. Issue D (see evaluation_review_and_priorities.md): when
+    #    lookup._region_mismatch_note() flagged that a product's own name
+    #    implies a different region than the one requested, that warning
+    #    must survive the model's rephrasing - the same verbatim-substring
+    #    guarantee checks 3/4 give citations and row markers. Without this,
+    #    phrase_answer() could silently drop or soften the one warning that
+    #    exists specifically so a mismatched product/region query is never
+    #    silently treated as a normal one.
+    #
+    #    Tolerant of markdown emphasis (*/_) around the note, unlike checks
+    #    3/4 - a live retest showed the model bolding "Note:" as "**Note:**"
+    #    in one case and leaving it plain in another, and on reflection that
+    #    emphasis is a GOOD thing here (the note's whole job is to catch a
+    #    reader's eye partway through a longer answer, unlike a citation or
+    #    row marker, which are machine-matched tokens with no readability
+    #    purpose of their own) - so the fix is to make this check tolerant
+    #    of it, not to forbid the model from doing it. Stripped only from a
+    #    local copy used for this one comparison; citations (check 3) can
+    #    legitimately contain underscores (e.g. a filename citation like
+    #    "WW_Content_Requirements_FY25_FINAL.xlsx") and must not be touched.
+    if region_mismatch_note:
+        phrased_no_emphasis = re.sub(r"[*_]+", "", phrased)
+        if region_mismatch_note not in phrased_no_emphasis:
+            return False
+    return True

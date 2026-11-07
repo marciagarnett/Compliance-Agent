@@ -242,7 +242,8 @@ def ask():
     # unconditionally since it's cheap and both call sites need it below.
     not_ok_header = lookup.not_ok_header(result)
     phrased = llm_agent.phrase_answer(
-        LLM_CLIENT, LLM_MODEL, user_text, full_report, result.ok, not_ok_header
+        LLM_CLIENT, LLM_MODEL, user_text, full_report, result.ok, not_ok_header,
+        result.region_mismatch_note,
     )
 
     heads_up = [hit["note"] for hit in extracted.get("out_of_scope_topics", out_of_scope)]
@@ -252,18 +253,9 @@ def ask():
     verified_ok = llm_agent.verify_phrased_answer(
         phrased, lookup.shown_citations(result), result.ok,
         lookup.shown_row_markers(result), not_ok_header,
+        result.region_mismatch_note,
     )
     phrase_call_failed = phrased is None  # captured before phrased is overwritten below
-    if phrased and not verified_ok:
-        # TEMPORARY diagnostic only - captures the raw, pre-fallback model
-        # text on a verification failure so it can be inspected after the
-        # fact (it is otherwise discarded, never logged). Remove once the
-        # live clarification-case failure is diagnosed.
-        try:
-            with open("debug_last_phrased.txt", "w", encoding="utf-8") as _dbg:
-                _dbg.write(phrased)
-        except Exception:
-            pass
     if phrased and not verified_ok:
         phrased = (
             "[The phrased summary didn't pass this app's check against the "
