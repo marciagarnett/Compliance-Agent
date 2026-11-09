@@ -47,17 +47,89 @@ from __future__ import annotations
 
 import os
 from functools import wraps
+import time
 
 from dotenv import load_dotenv
 from flask import Flask, Response, render_template, request
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 import activity_log
 import llm_agent
 import lookup
 
+# ---- Minimal in-memory cache for repeated identical questions ----------
+# Added after Test Case 6 of the security review (Nov 2026) showed a burst
+# of identical requests gets zero resistance - each one re-runs BOTH real
+# Anthropic API calls (extract_query + phrase_answer). This only helps the
+# *exact-repeated-question* pattern specifically (the pattern that test
+# actually used) - it does nothing for a burst of varied questions and is
+# not a substitute for a real rate limit or an account-level spend cap.
+# See Compliance_Agent_Security_Risk_Review.docx, "Proposed Improvements"
+# section, for the fuller trade-off analysis.
+#
+# Deliberately simple for this project's scale: a plain dict, no locking
+# (a rare race on a brand-new question just means both calls go through -
+# not a correctness bug, only a missed optimization), no size cap (bounded
+# in practice by how many distinct questions a small, known group of
+# stakeholders asks within one TTL window). This also only works
+# correctly as a SINGLE process - Procfile runs gunicorn with no worker
+# count set (so it defaults to one), which is true today, but if that
+# ever changes, each worker would keep its own separate cache and this
+# comment would no longer be accurate.
+ASK_CACHE_TTL_SECONDS = 300  # 5 minutes
+_ask_cache: dict[str, tuple[float, dict, dict]] = {}
+# cache key (normalized question text) -> (expires_at, render_kwargs, log_kwargs)
+
+
+def _ask_cache_get(key):
+    """Return (render_kwargs, log_kwargs) for a fresh cache hit, else None."""
+    entry = _ask_cache.get(key)
+    if entry is None:
+        return None
+    expires_at, render_kwargs, log_kwargs = entry
+    if time.monotonic() >= expires_at:
+        del _ask_cache[key]
+        return None
+    return render_kwargs, log_kwargs
+
+
+def _ask_cache_set(key, render_kwargs, log_kwargs):
+    _ask_cache[key] = (time.monotonic() + ASK_CACHE_TTL_SECONDS, render_kwargs, log_kwargs)
+
 load_dotenv()  # reads .env if present; harmless if it doesn't exist
 
 app = Flask(__name__)
+
+# ---- Rate limiter for /ask -----------------------------------------------
+# Added after Test Case 6 of the security review (Nov 2026) showed a true
+# concurrent burst (15 requests fired nearly simultaneously) gets through
+# with zero resistance - and, separately, that a response cache CANNOT stop
+# this specific pattern, because a cache only writes after a request
+# finishes and every request in a true burst starts before any of them do.
+# A rate limiter does not have that flaw: Flask-Limiter checks and
+# increments a counter atomically at the START of each request, before any
+# real work happens, so excess requests in the same window are rejected
+# immediately rather than after an expensive pipeline run.
+#
+# Two stacked limits, not one, because they defend against different
+# shapes: "5 per 10 seconds" targets a fast burst like the one actually
+# tested (the Case 6 script sent 15 in under 9 seconds - this would let 5
+# through and reject the rest); "30 per hour" bounds sustained use over a
+# longer session without being so tight it interferes with a normal
+# multi-question testing session. Both are per-IP (the default key_func),
+# which is a known, accepted trade-off - several real stakeholders testing
+# from the same office network share one IP and could be throttled
+# together; see Compliance_Agent_Security_Risk_Review.docx for the fuller
+# discussion. In-memory storage, like the /ask cache above: correct for a
+# single process (today's default, per Procfile), not coordinated across
+# multiple worker processes if that default is ever changed.
+limiter = Limiter(
+    key_func=get_remote_address,
+    app=app,
+    storage_uri="memory://",
+    default_limits=[],  # no app-wide limit - only /ask is rate-limited below
+)
 
 # Loaded once at process startup - both CSVs are small and read-only, so
 # there's no reason to re-read them per request. If either fails to load,
@@ -95,6 +167,27 @@ def _require_basic_auth(f):
     return wrapped
 
 
+@app.errorhandler(429)
+def rate_limited(_exc):
+    """
+    Friendly, in-template message for a rate-limited /ask request - same
+    bracketed style as the app's other fallback messages, rather than
+    Flask-Limiter's default plain-text error page. Logged as FAILED with
+    its own reason code so activity_log.txt can distinguish "the model
+    couldn't be reached" from "this was stopped before it tried" on
+    review (see activity_log.py's reason_code convention).
+    """
+    activity_log.log_event(activity_log.FAILED, mode="ask", reason="rate_limited")
+    report = (
+        "[Too many questions in a short time - please wait a few seconds "
+        "and try again.]"
+    )
+    return render_template(
+        "index.html", llm_available=LLM_AVAILABLE,
+        phrased=report, verified=None, heads_up=[], query=None,
+    ), 429
+
+
 @app.route("/healthz")
 def healthz():
     """Plain health check for whatever host/platform is running this."""
@@ -115,6 +208,7 @@ def index():
 
 
 @app.route("/ask", methods=["POST"])
+@limiter.limit("5 per 10 seconds;30 per hour")
 @_require_basic_auth
 def ask():
     """
@@ -130,6 +224,22 @@ def ask():
             "index.html", llm_available=LLM_AVAILABLE,
             phrased=None, verified=None, heads_up=[], query=None,
         )
+
+    cache_key = user_text.casefold()
+    cached = _ask_cache_get(cache_key)
+    if cached is not None:
+        render_kwargs, log_kwargs = cached
+        # Re-logged on every cache hit (not silently skipped) so
+        # activity_log.txt still shows one line per request - with a
+        # reason suffix that makes a cache-served response distinguishable
+        # from a fresh one on review, rather than looking identical.
+        reason = log_kwargs["reason"]
+        activity_log.log_event(
+            log_kwargs["outcome"], mode=log_kwargs["mode"],
+            identifier=log_kwargs["identifier"], region=log_kwargs["region"],
+            reason=(f"{reason}+cache_hit" if reason else "cache_hit"),
+        )
+        return render_template("index.html", **render_kwargs)
 
     if not LLM_AVAILABLE:
         report = "[Plain-English mode needs an Anthropic API key - see README.md.]"
@@ -216,14 +326,22 @@ def ask():
         # supported regions) - that is a clarification question, not a
         # dead end, so it gets the same CLARIFICATION bucket an ambiguous
         # run_lookup() result does rather than FAILED (see activity_log.py).
-        activity_log.log_event(
-            activity_log.CLARIFICATION, mode="ask", identifier=identifier, region=region,
-            reason=reason,
-        )
-        return render_template(
-            "index.html", llm_available=LLM_AVAILABLE,
+        render_kwargs = dict(
+            llm_available=LLM_AVAILABLE,
             phrased=report, verified=None, heads_up=[], query=user_text,
         )
+        log_kwargs = dict(
+            outcome=activity_log.CLARIFICATION, mode="ask",
+            identifier=identifier, region=region, reason=reason,
+        )
+        # Cached here too, not just on the full-success path below: this
+        # branch already spent one real extract_query() call, and an
+        # identical resend (e.g. someone re-submitting the same incomplete
+        # question) would otherwise spend another one for the same
+        # not-enough-information answer.
+        _ask_cache_set(cache_key, render_kwargs, log_kwargs)
+        activity_log.log_event(**log_kwargs)
+        return render_template("index.html", **render_kwargs)
 
     result = lookup.run_lookup(identifier, region, PRODUCTS, REQUIREMENTS,
                                 requested_domains=requested_domains)
@@ -291,15 +409,16 @@ def ask():
         outcome = activity_log.CLARIFICATION
     else:
         outcome = activity_log.HUMAN_REVIEW
-    activity_log.log_event(
-        outcome,
-        mode="ask", identifier=identifier, region=region, reason=phrase_reason,
-    )
-
-    return render_template(
-        "index.html", llm_available=LLM_AVAILABLE,
+    render_kwargs = dict(
+        llm_available=LLM_AVAILABLE,
         phrased=phrased, verified=verified_report, heads_up=heads_up, query=user_text,
     )
+    log_kwargs = dict(
+        outcome=outcome, mode="ask", identifier=identifier, region=region, reason=phrase_reason,
+    )
+    _ask_cache_set(cache_key, render_kwargs, log_kwargs)
+    activity_log.log_event(**log_kwargs)
+    return render_template("index.html", **render_kwargs)
 
 
 if __name__ == "__main__":
